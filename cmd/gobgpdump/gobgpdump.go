@@ -10,6 +10,10 @@ import (
 	"time"
 )
 
+func init() {
+	flag.Parse()
+}
+
 func main() {
 	// Get the config for this dump
 	dc, err := GetDumpConfig()

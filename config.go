@@ -88,7 +88,6 @@ func (dc *DumpConfig) CloseAll() {
 }
 
 func GetDumpConfig() (*DumpConfig, error) {
-	flag.Parse()
 	args := flag.Args()
 
 	var dc DumpConfig
