@@ -61,7 +61,7 @@ func dumpFile(name string, dc *DumpConfig) {
 
 		if filterAll(dc.filters, mbs) {
 			passedCt++
-			output, err := dc.fmtr.format(mbs, NewMBSInfo(data, name, entryCt))
+			output, err := dc.fmtr.format(mbs, NewMBSInfo(name, entryCt))
 			if err != nil {
 				dc.log.WriteString(fmt.Sprintf("%s\n", err))
 			} else {

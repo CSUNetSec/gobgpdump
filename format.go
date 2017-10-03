@@ -35,13 +35,12 @@ type Formatter interface {
 
 // This contains miscellaneous info for the MBS structure
 type MBSInfo struct {
-	raw    []byte
 	file   string
 	msgNum int
 }
 
-func NewMBSInfo(raw []byte, file string, msg int) MBSInfo {
-	return MBSInfo{raw, file, msg}
+func NewMBSInfo(file string, msg int) MBSInfo {
+	return MBSInfo{file, msg}
 }
 
 // A simple text representation for the dump.
@@ -90,8 +89,8 @@ func NewIdentityFormatter() IdentityFormatter {
 	return IdentityFormatter{}
 }
 
-func (id IdentityFormatter) format(_ *mrt.MrtBufferStack, inf MBSInfo) (string, error) {
-	return string(inf.raw), nil
+func (id IdentityFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
+	return string(mbs.GetRawMessage()), nil
 }
 
 // No summarization needed
