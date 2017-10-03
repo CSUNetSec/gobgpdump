@@ -23,6 +23,10 @@ import (
 	"time"
 )
 
+var (
+	DEBUG bool
+)
+
 // This is a struct to store all options in.
 // This is just convenient so it can be read
 // as a json object
@@ -35,28 +39,11 @@ type ConfigFile struct {
 	Do       string   //dump output
 	Wc       int      //worker count
 	Fmtr     string   //output format
-	conf     bool     //get config from a file
+	Conf     bool     //get config from a file
 	Srcas    string   `json:"Srcas,omitempty"`
 	Destas   string   `json:"Destas,omitempty"`
 	PrefList string   `json:"prefixes,omitempty"`
-}
-
-var configFile ConfigFile
-var DEBUG bool
-
-func init() {
-	flag.StringVar(&configFile.Lo, "lo", "stdout", "file to place log output")
-	flag.StringVar(&configFile.So, "so", "stdout", "file to place stat output")
-	flag.StringVar(&configFile.Do, "o", "stdout", "file to place dump output")
-	flag.StringVar(&configFile.Fmtr, "fmtr", "text", "format to output results in.\n"+
-		"Available Formats:\n"+
-		"pup, pts, day, json, text, id")
-	flag.StringVar(&configFile.Srcas, "srcas", "", "list of comma separated AS's (e.g. 1,2,3,4) to filter message source by")
-	flag.StringVar(&configFile.Destas, "destas", "", "list of comma separated AS's (e.g. 1,2,3,4) to filter message destination by")
-	flag.StringVar(&configFile.PrefList, "prefixes", "", "list of commma separated prefixes. Messages containing any in the list will pass filters")
-	flag.BoolVar(&configFile.conf, "conf", false, "draw configuration from a file")
-	flag.BoolVar(&DEBUG, "debug", false, "run the program in debug mode")
-	flag.IntVar(&configFile.Wc, "wc", 1, "number of worker threads to use (max 16)")
+	Debug    bool     // sets the global debug flag for the package
 }
 
 // This struct is the complete parameter set for a file
@@ -87,15 +74,20 @@ func (dc *DumpConfig) CloseAll() {
 	dc.stat.Close()
 }
 
-func GetDumpConfig() (*DumpConfig, error) {
+func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 	args := flag.Args()
 
 	var dc DumpConfig
-	if configFile.conf {
+	if configFile.Debug == true {
+		DEBUG = true
+	} else {
+		DEBUG = false
+	}
+	if configFile.Conf {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("Incorrect number of arguments for -conf option.\nShould be: -conf <collector formats> <config file>")
 		}
-		ss, err := parseConfig(args[0], args[1])
+		ss, err := parseConfig(configFile, args[0], args[1])
 		if err != nil {
 			return nil, fmt.Errorf("Error parsing configuration: %s", err)
 		}
@@ -133,9 +125,9 @@ func GetDumpConfig() (*DumpConfig, error) {
 	golog.SetOutput(dc.log)
 
 	// This will need access to redirected output files
-	dc.fmtr = getFormatter(dump)
+	dc.fmtr = getFormatter(configFile, dump)
 
-	filts, err := getFilters()
+	filts, err := getFilters(configFile)
 	dc.filters = filts
 	if err != nil {
 		return nil, err
@@ -144,7 +136,7 @@ func GetDumpConfig() (*DumpConfig, error) {
 	return &dc, nil
 }
 
-func getFilters() ([]Filter, error) {
+func getFilters(configFile ConfigFile) ([]Filter, error) {
 	var filters []Filter
 	if configFile.Srcas != "" {
 		srcFilt, err := NewASFilter(configFile.Srcas, true)
@@ -170,7 +162,7 @@ func getFilters() ([]Filter, error) {
 }
 
 // Consider putting this in format.go
-func getFormatter(dumpOut *os.File) (fmtr Formatter) {
+func getFormatter(configFile ConfigFile, dumpOut *os.File) (fmtr Formatter) {
 	switch configFile.Fmtr {
 	case "json":
 		fmtr = NewJSONFormatter()
@@ -282,7 +274,7 @@ func (ds *DirectorySource) loadNextDir() error {
 }
 
 //This parses the configuration file
-func parseConfig(colfmt, config string) (stringsource, error) {
+func parseConfig(configFile ConfigFile, colfmt, config string) (stringsource, error) {
 	// Parse the collector format file
 	formats, err := readCollectorFormat(colfmt)
 	if err != nil {

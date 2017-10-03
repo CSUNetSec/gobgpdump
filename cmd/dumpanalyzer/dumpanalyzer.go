@@ -12,11 +12,24 @@ import (
 	"os"
 )
 
+var (
+	clusterDurationStart string
+	clusterDurationEnd   string
+	clusterDurationDelta int
+)
+
 func init() {
-	flag.Parse()
+	const (
+		defaultArg   = "notset"
+		defaultDelta = 3600
+	)
+	flag.StringVar(&clusterDurationStart, "s", defaultArg, "clustering duration start date (format: YYYYMMDDHHMM)")
+	flag.StringVar(&clusterDurationEnd, "e", defaultArg, "clustering duration end date (format: YYYYMMDDHHMM)")
+	flag.IntVar(&clusterDurationDelta, "d", defaultDelta, "clustering duration delta in minutes (default 3600)")
 }
 
 func main() {
+	flag.Parse()
 	if len(flag.Args()) != 1 {
 		fmt.Println("requires a gob file to decode")
 		return
