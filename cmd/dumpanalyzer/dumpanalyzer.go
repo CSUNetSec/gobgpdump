@@ -11,6 +11,7 @@ import (
 	"github.com/CSUNetSec/gobgpdump"
 	"io"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -26,64 +27,60 @@ const (
 
 func init() {
 	const (
-		defaultArg   = "notset"
 		defaultDelta = 1440
 	)
-	flag.StringVar(&clusterDurationStart, "s", defaultArg, "clustering duration start date (format: YYYYMMDDHHMM)")
-	flag.StringVar(&clusterDurationEnd, "e", defaultArg, "clustering duration end date (format: YYYYMMDDHHMM)")
 	flag.IntVar(&clusterDurationDelta, "d", defaultDelta, "clustering duration delta in minutes (default 1440 minutes in a day)")
 }
 
-type DateValuer interface {
-	Add(string, float64)
+type PrefixDateValues struct {
+	date       time.Time          //bucket
+	prefCounts map[string]int64   //this will be populated in the end
+	peerAdv    map[string][]int32 //advertizement events where int32 is the peer ASN
 }
 
-type DateValueVector struct {
-	date time.Time
-	vals map[string][]float64
-}
-
-func NewDateValueVector(date time.Time) *DateValueVector {
-	return &DateValueVector{
+func NewPrefixDateValues(date time.Time) PrefixDateValues {
+	return PrefixDateValues{
 		date,
-		make(map[string][]float64),
+		make(map[string]int64),
+		make(map[string][]int32),
 	}
 }
 
-func (d *DateValueVector) Add(key string, nval float64) {
-	if val, ok := d.vals[key]; !ok {
-		d.vals[key] = make([]float64, 0)
-	} else {
-		d.vals[key] = append(val, nval)
+type PrefixHistoryMgr struct {
+	buckets []PrefixDateValues
+	delta   time.Duration
+}
+
+func NewPrefixHistoryMgr(a time.Duration) *PrefixHistoryMgr {
+	return &PrefixHistoryMgr{
+		[]PrefixDateValues{},
+		a,
 	}
 }
 
-type DateValueScalar struct {
-	date time.Time
-	vals map[string]float64
-}
-
-func NewDateValueScalar(date time.Time) *DateValueScalar {
-	return &DateValueScalar{
-		date,
-		make(map[string]float64),
+func (p *PrefixHistoryMgr) Add(a gobgpdump.PrefixHistory) {
+	for _, ev := range a.Events {
+		bucket_ind := p.GetBucket(ev.Timestamp)
+		fmt.Printf("event with ts:%s will go to bucket with ts:%s from %d buckets\n", ev.Timestamp, p.buckets[bucket_ind].date, len(p.buckets))
 	}
 }
 
-func (d *DateValueScalar) Add(key string, nval float64) {
-	d.vals[key] = nval
-}
-
-func BuildDateValueVectorSlice(start time.Time, end time.Time, dur time.Duration) ([]*DateValueVector, error) {
-	fmt.Printf("got called with start:%s end:%s dur:%s\n", start, end, dur)
-	if end.Before(start) {
-		return nil, fmt.Errorf("start before end")
+func (p *PrefixHistoryMgr) GetBucket(a time.Time) int {
+	if len(p.buckets) == 0 { //create the first bucket
+		fmt.Printf("creating first\n")
+		p.buckets = append(p.buckets, NewPrefixDateValues(a))
+		return 0
 	}
-	ret := []*DateValueVector{}
-	for ctime := start; ctime.Before(end); ctime = ctime.Add(dur) {
-		ret = append(ret, NewDateValueVector(ctime))
+	ind1 := sort.Search(len(p.buckets), func(i int) bool { return p.buckets[i].date.After(a) })
+	ind2 := sort.Search(len(p.buckets), func(i int) bool { return p.buckets[i].date.Add(p.delta).After(a) })
+	if ind1 == ind2 { // need to expand
+		// add all the inbetween buckets to keep it sorted
+		for cdate := p.buckets[len(p.buckets)-1].date.Add(p.delta); a.After(cdate); cdate = cdate.Add(p.delta) {
+			p.buckets = append(p.buckets, NewPrefixDateValues(cdate))
+		}
+		return len(p.buckets) - 1
 	}
-	return ret, nil
+	return ind1 - 1
 }
 
 func main() {
@@ -92,19 +89,8 @@ func main() {
 		fmt.Println("requires a gob file to decode")
 		return
 	}
-	t1, e1 := time.Parse(timeFrmt, clusterDurationStart)
-	t2, e2 := time.Parse(timeFrmt, clusterDurationEnd)
 	// this is ugly to get the type system to work. doesn't happen with const decls cause it gets promoted
 	dur := time.Duration(clusterDurationDelta) * time.Minute
-	if e1 != nil || e2 != nil {
-		fmt.Printf("error parsing clustering time start:%s, time end:%s\n", e1, e2)
-		return
-	}
-	dvvecs, err := BuildDateValueVectorSlice(t1, t2, dur)
-	if err != nil {
-		fmt.Printf("couldn't build date value vector:%s", err)
-		return
-	}
 	gfd, err := os.Open(flag.Arg(0))
 	if err != nil {
 		fmt.Printf("error opening file:%s\n", err)
@@ -113,6 +99,7 @@ func main() {
 	defer gfd.Close()
 	dec := gob.NewDecoder(gfd)
 	count := 0
+	phmgr := NewPrefixHistoryMgr(dur)
 	for {
 		ph := gobgpdump.PrefixHistory{}
 		decerr := dec.Decode(&ph)
@@ -123,8 +110,7 @@ func main() {
 			fmt.Errorf("decoding error:%s. decoded:%d entries\n", decerr, count)
 			return
 		}
+		phmgr.Add(ph)
 		count++
-		//fmt.Printf("[%d]:%+v\n", count, ph)
 	}
-	fmt.Printf("will cluster those in these dvvecs:%+v", dvvecs)
 }
