@@ -87,10 +87,11 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("Incorrect number of arguments for -conf option.\nShould be: -conf <collector formats> <config file>")
 		}
-		ss, err := parseConfig(configFile, args[0], args[1])
+		newConfig, ss, err := parseConfig(args[0], args[1])
 		if err != nil {
 			return nil, fmt.Errorf("Error parsing configuration: %s", err)
 		}
+		configFile = newConfig
 		dc.source = ss
 	} else {
 		dc.source = NewStringArray(args)
@@ -274,32 +275,33 @@ func (ds *DirectorySource) loadNextDir() error {
 }
 
 //This parses the configuration file
-func parseConfig(configFile ConfigFile, colfmt, config string) (stringsource, error) {
+func parseConfig(colfmt, config string) (ConfigFile, stringsource, error) {
+	var cf ConfigFile
 	// Parse the collector format file
 	formats, err := readCollectorFormat(colfmt)
 	if err != nil {
-		return nil, err
+		return cf, nil, err
 	}
 
 	// Read the config as a json object from the file
 	fd, err := os.Open(config)
 	if err != nil {
-		return nil, err
+		return cf, nil, err
 	}
 	defer fd.Close()
 
 	dec := json.NewDecoder(fd)
-	dec.Decode(&configFile)
+	dec.Decode(&cf)
 
 	// Create a list of directories
-	start, err := time.Parse("2006.01", configFile.Start)
+	start, err := time.Parse("2006.01", cf.Start)
 	if err != nil {
-		return nil, fmt.Errorf("Error parsing start date")
+		return cf, nil, fmt.Errorf("Error parsing start date: %s", cf.Start)
 	}
 
-	end, err := time.Parse("2006.01", configFile.End)
+	end, err := time.Parse("2006.01", cf.End)
 	if err != nil {
-		return nil, fmt.Errorf("Error parsing end date")
+		return cf, nil, fmt.Errorf("Error parsing end date: %s", cf.End)
 	}
 
 	paths := []string{}
@@ -307,7 +309,7 @@ func parseConfig(configFile ConfigFile, colfmt, config string) (stringsource, er
 	// Start at start, increment by 1 months, until it's past 1 day
 	// past end, so end is included
 	for mon := start; mon.Before(end.AddDate(0, 0, 1)); mon = mon.AddDate(0, 1, 0) {
-		for _, col := range configFile.Collist {
+		for _, col := range cf.Collist {
 			curPath, exists := formats[col]
 			// If the collector does not have a special rule,
 			// use the default rule
@@ -322,7 +324,7 @@ func parseConfig(configFile ConfigFile, colfmt, config string) (stringsource, er
 		}
 	}
 
-	return NewDirectorySource(paths), nil
+	return cf, NewDirectorySource(paths), nil
 }
 
 func readCollectorFormat(fname string) (map[string]string, error) {
