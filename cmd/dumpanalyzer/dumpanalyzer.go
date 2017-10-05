@@ -33,10 +33,10 @@ func init() {
 }
 
 type PrefixDateValues struct {
-	date          time.Time          //bucket
-	prefAdvCounts map[string]int64   //this will be populated in the end
-	prefWdrCounts map[string]int64   //this will be populated in the end
-	peerAdv       map[string][]int32 //advertizement events where int32 is the peer ASN
+	date          time.Time           //bucket
+	prefAdvCounts map[string]int64    //this will be populated in the end
+	prefWdrCounts map[string]int64    //this will be populated in the end
+	peerAdv       map[string][]uint32 //advertizement events where int32 is the peer ASN
 }
 
 func NewPrefixDateValues(date time.Time) PrefixDateValues {
@@ -44,7 +44,7 @@ func NewPrefixDateValues(date time.Time) PrefixDateValues {
 		date,
 		make(map[string]int64),
 		make(map[string]int64),
-		make(map[string][]int32),
+		make(map[string][]uint32),
 	}
 }
 
@@ -71,6 +71,15 @@ func (p *PrefixHistoryMgr) Add(a gobgpdump.PrefixHistory) {
 				buck.prefAdvCounts[a.Pref] = count + 1
 			} else {
 				buck.prefAdvCounts[a.Pref] = 1
+			}
+			//get peer from AS path
+			if len(ev.ASPath) > 1 { //has at least a peer
+				pas := ev.ASPath[len(ev.ASPath)-2]
+				if peerAses, ok := buck.peerAdv[a.Pref]; ok {
+					buck.peerAdv[a.Pref] = append(peerAses, pas)
+				} else {
+					buck.peerAdv[a.Pref] = []uint32{pas}
+				}
 			}
 		} else {
 			if count, ok := buck.prefWdrCounts[a.Pref]; ok {
