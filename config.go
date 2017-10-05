@@ -76,7 +76,6 @@ func (dc *DumpConfig) CloseAll() {
 
 func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 	args := flag.Args()
-
 	var dc DumpConfig
 	if configFile.Debug == true {
 		DEBUG = true
@@ -101,7 +100,7 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 
 	// This error is ignored. If there is an error, output to that file just gets trashed
 	var dump *os.File
-	if configFile.Do == "stdout" {
+	if configFile.Do == "stdout" || configFile.Do == "" {
 		dump = os.Stdout
 	} else {
 		dump, _ = os.Create(configFile.Do)
@@ -109,7 +108,7 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 	dc.dump = NewMultiWriteFile(dump)
 
 	var stat *os.File
-	if configFile.So == "stdout" {
+	if configFile.So == "stdout" || configFile.Do == "" {
 		stat = os.Stdout
 	} else {
 		stat, _ = os.Create(configFile.So)
@@ -117,7 +116,7 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 	dc.stat = NewMultiWriteFile(stat)
 
 	var log *os.File
-	if configFile.Lo == "stdout" {
+	if configFile.Lo == "stdout" || configFile.Do == "" {
 		log = os.Stdout
 	} else {
 		log, _ = os.Create(configFile.Lo)
