@@ -108,7 +108,7 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 	dc.dump = NewMultiWriteFile(dump)
 
 	var stat *os.File
-	if configFile.So == "stdout" || configFile.Do == "" {
+	if configFile.So == "stdout" || configFile.So == "" {
 		stat = os.Stdout
 	} else {
 		stat, _ = os.Create(configFile.So)
@@ -116,7 +116,7 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 	dc.stat = NewMultiWriteFile(stat)
 
 	var log *os.File
-	if configFile.Lo == "stdout" || configFile.Do == "" {
+	if configFile.Lo == "stdout" || configFile.Lo == "" {
 		log = os.Stdout
 	} else {
 		log, _ = os.Create(configFile.Lo)
