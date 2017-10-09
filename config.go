@@ -99,25 +99,31 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 	dc.workers = configFile.Wc
 
 	// This error is ignored. If there is an error, output to that file just gets trashed
-	var dump *os.File
-	if configFile.Do == "stdout" || configFile.Do == "" {
+	var dump io.WriteCloser
+	if configFile.Do == "stdout" {
 		dump = os.Stdout
+	} else if configFile.Do == "" {
+		dump = DiscardCloser{}
 	} else {
 		dump, _ = os.Create(configFile.Do)
 	}
 	dc.dump = NewMultiWriteFile(dump)
 
-	var stat *os.File
-	if configFile.So == "stdout" || configFile.So == "" {
+	var stat io.WriteCloser
+	if configFile.So == "stdout" {
 		stat = os.Stdout
+	} else if configFile.So == "" {
+		stat = DiscardCloser{}
 	} else {
 		stat, _ = os.Create(configFile.So)
 	}
 	dc.stat = NewMultiWriteFile(stat)
 
-	var log *os.File
-	if configFile.Lo == "stdout" || configFile.Lo == "" {
+	var log io.WriteCloser
+	if configFile.Lo == "stdout" {
 		log = os.Stdout
+	} else if configFile.Lo == "" {
+		log = DiscardCloser{}
 	} else {
 		log, _ = os.Create(configFile.Lo)
 	}
@@ -162,7 +168,7 @@ func getFilters(configFile ConfigFile) ([]Filter, error) {
 }
 
 // Consider putting this in format.go
-func getFormatter(configFile ConfigFile, dumpOut *os.File) (fmtr Formatter) {
+func getFormatter(configFile ConfigFile, dumpOut io.Writer) (fmtr Formatter) {
 	switch configFile.Fmtr {
 	case "json":
 		fmtr = NewJSONFormatter()
@@ -318,7 +324,6 @@ func parseConfig(colfmt, config string) (ConfigFile, stringsource, error) {
 			}
 			// Remove all placeholders from the path
 			curPath = strings.Replace(curPath, "{yyyy.mm}", mon.Format("2006.01"), -1)
-			fmt.Printf("Adding path: %s\n", curPath)
 			paths = append(paths, curPath)
 		}
 	}

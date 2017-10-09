@@ -5,6 +5,8 @@ import (
 	"compress/bzip2"
 	"fmt"
 	"github.com/CSUNetSec/protoparse/protocol/mrt"
+	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sync"
@@ -14,12 +16,12 @@ import (
 // goroutines. This is a simple file wrapper to lock on a write,
 // and unlock once the write is complete
 type MultiWriteFile struct {
-	base *os.File
+	base io.WriteCloser
 	mx   *sync.Mutex
 }
 
-func NewMultiWriteFile(fd *os.File) *MultiWriteFile {
-	return &MultiWriteFile{fd, &sync.Mutex{}}
+func NewMultiWriteFile(w io.WriteCloser) *MultiWriteFile {
+	return &MultiWriteFile{w, &sync.Mutex{}}
 }
 
 func (mwf *MultiWriteFile) WriteString(s string) (n int, err error) {
@@ -29,7 +31,7 @@ func (mwf *MultiWriteFile) WriteString(s string) (n int, err error) {
 	if mwf.base == nil {
 		return 0, nil
 	}
-	n, err = mwf.base.WriteString(s)
+	n, err = mwf.base.Write([]byte(s))
 	mwf.mx.Unlock()
 	return
 }
@@ -86,3 +88,9 @@ func isBz2(fname string) bool {
 	}
 	return false
 }
+
+type DiscardCloser struct{}
+
+func (d DiscardCloser) Write(data []byte) (n int, err error) { return ioutil.Discard.Write(data) }
+
+func (d DiscardCloser) Close() error { return nil }

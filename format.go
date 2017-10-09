@@ -19,7 +19,6 @@ import (
 	util "github.com/CSUNetSec/protoparse/util"
 	radix "github.com/armon/go-radix"
 	"io"
-	"os"
 	"sync"
 	"time"
 )
@@ -137,7 +136,7 @@ type UniquePrefixList struct {
 	prefixes map[string]interface{}
 }
 
-func NewUniquePrefixList(fd *os.File) *UniquePrefixList {
+func NewUniquePrefixList(fd io.Writer) *UniquePrefixList {
 	upl := UniquePrefixList{}
 	upl.output = fd
 	upl.mux = &sync.Mutex{}
@@ -212,7 +211,7 @@ type UniquePrefixSeries struct {
 	prefixes map[string]interface{}
 }
 
-func NewUniquePrefixSeries(fd *os.File) *UniquePrefixSeries {
+func NewUniquePrefixSeries(fd io.Writer) *UniquePrefixSeries {
 	ups := UniquePrefixSeries{}
 	ups.output = fd
 	ups.mux = &sync.Mutex{}
@@ -306,11 +305,11 @@ func deleteChildPrefixes(pm map[string]interface{}) {
 }
 
 type DayFormatter struct {
-	output *os.File
+	output io.Writer
 	hourCt []int
 }
 
-func NewDayFormatter(fd *os.File) *DayFormatter {
+func NewDayFormatter(fd io.Writer) *DayFormatter {
 	return &DayFormatter{fd, make([]int, 24)}
 }
 
@@ -322,6 +321,6 @@ func (d *DayFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error
 
 func (d *DayFormatter) summarize() {
 	for i := 0; i < len(d.hourCt); i++ {
-		d.output.WriteString(fmt.Sprintf("%d %d\n", i, d.hourCt[i]))
+		d.output.Write([]byte(fmt.Sprintf("%d %d\n", i, d.hourCt[i])))
 	}
 }
