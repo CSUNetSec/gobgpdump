@@ -211,19 +211,23 @@ func (p *PrefixHistoryMgr) Summarize() {
 		topk++
 	}*/
 	//}
+	p.PrintSums()
+}
+
+func (p *PrefixHistoryMgr) TopKPrefixes(k int) {
 	evacc := uint64(0)
 	for _, pref := range p.prefSeen {
 		evacc = evacc + pref.events
 	}
 	fmt.Printf("num prefixes:%d\t total events:%d\n", len(p.prefSeen), evacc)
 	sort.Slice(p.prefSeen, func(i, j int) bool { return p.prefSeen[i].events > p.prefSeen[j].events })
-	fmt.Printf("top 10 prefixes by event count:\n")
-	for i := 0; i < 10; i++ {
+	fmt.Printf("top %d prefixes by event count:\n", k)
+	for i := 0; i < k; i++ {
 		fmt.Printf("\t%s %d %.4f%%\n", p.prefSeen[i].prefix, p.prefSeen[i].events, float32(p.prefSeen[i].events)/float32(evacc))
 	}
 	sort.Slice(p.prefSeen, func(i, j int) bool { return len(p.prefSeen[i].peerAses) > len(p.prefSeen[j].peerAses) })
-	fmt.Printf("top 10 prefixes by number of peers advertized\n")
-	for i := 0; i < 10; i++ {
+	fmt.Printf("top %d prefixes by number of peers advertized\n", k)
+	for i := 0; i < k; i++ {
 		fmt.Printf("\t%s %d [%v]\n", p.prefSeen[i].prefix, len(p.prefSeen[i].peerAses), p.prefSeen[i].peerAses)
 	}
 	sort.Slice(p.prefSeen, func(i, j int) bool {
@@ -236,10 +240,14 @@ func (p *PrefixHistoryMgr) Summarize() {
 		}
 		return cnt1 > cnt2
 	})
-	fmt.Printf("again top 10 prefixes by event count:\n")
-	for i := 0; i < 10; i++ {
+	fmt.Printf("again top %d prefixes by event count:\n", k)
+	for i := 0; i < k; i++ {
 		fmt.Printf("\t%s %d %v\n", p.prefSeen[i].prefix, p.prefSeen[i].events, p.prefSeen[i].peerAses)
 	}
+
+}
+
+func (p *PrefixHistoryMgr) PrintSums() {
 	for _, b := range p.buckets {
 		advcount, wdrcount := uint64(0), uint64(0)
 		for _, pcount := range b.prefAdvCounts {
@@ -248,13 +256,12 @@ func (p *PrefixHistoryMgr) Summarize() {
 		for _, pcount := range b.prefWdrCounts {
 			wdrcount = wdrcount + pcount
 		}
-		fmt.Printf("total counts\n%s\t%d\t%d\n", b.date, advcount, wdrcount)
+		fmt.Printf("%s\t%d\t%d\n", b.date.Format(timeFrmt), advcount, wdrcount)
 	}
 }
 
 func (p *PrefixHistoryMgr) GetBucket(a time.Time) int {
 	if len(p.buckets) == 0 { //create the first bucket
-		fmt.Printf("creating first\n")
 		p.buckets = append(p.buckets, NewPrefixDateValues(a))
 		return 0
 	}
