@@ -31,19 +31,20 @@ var (
 // This is just convenient so it can be read
 // as a json object
 type ConfigFile struct {
-	Collist  []string //List of collectors
-	Start    string   // Start month		These first three are only used in configuration option, which is why they don't have flags
-	End      string   //end month
-	Lo       string   //Log output
-	So       string   //Stat output
-	Do       string   //dump output
-	Wc       int      //worker count
-	Fmtr     string   //output format
-	Conf     bool     //get config from a file
-	Srcas    string   `json:"Srcas,omitempty"`
-	Destas   string   `json:"Destas,omitempty"`
-	PrefList string   `json:"prefixes,omitempty"`
-	Debug    bool     // sets the global debug flag for the package
+	Collist    []string // List of collectors
+	Start      string   // Start month		These first three are only used in configuration option, which is why they don't have flags
+	End        string   // end month
+	Lo         string   // Log output
+	So         string   // Stat output
+	Do         string   // dump output
+	Wc         int      // worker count
+	Fmtr       string   // output format
+	Conf       bool     // get config from a file
+	Srcas      string   `json:"Srcas,omitempty"`
+	Destas     string   `json:"Destas,omitempty"`
+	PrefList   string   `json:"prefixes,omitempty"`
+	BucketMins int      // size of the bucket of events in minutes. won't probably affect all formatters.
+	Debug      bool     // sets the global debug flag for the package
 }
 
 // This struct is the complete parameter set for a file
@@ -56,6 +57,7 @@ type DumpConfig struct {
 	dump    *MultiWriteFile
 	log     *MultiWriteFile
 	stat    *MultiWriteFile
+	bm      Bucketer
 }
 
 func (dc *DumpConfig) GetWorkers() int {
@@ -138,6 +140,14 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Setup the bucket manager
+	if configFile.BucketMins != 0 {
+		dc.bm = NewBucketManager(configFile.BucketMins)
+		dc.fmtr.setBucketer(dc.bm)
+	} else {
+		dc.bm = zeroBucketer{}
+		dc.fmtr.setBucketer(dc.bm)
+	}
 
 	return &dc, nil
 }
@@ -167,7 +177,7 @@ func getFilters(configFile ConfigFile) ([]Filter, error) {
 	return filters, nil
 }
 
-// Consider putting this in format.go
+// Consider putting this in format.gO
 func getFormatter(configFile ConfigFile, dumpOut io.Writer) (fmtr Formatter) {
 	switch configFile.Fmtr {
 	case "json":
@@ -296,7 +306,10 @@ func parseConfig(colfmt, config string) (ConfigFile, stringsource, error) {
 	defer fd.Close()
 
 	dec := json.NewDecoder(fd)
-	dec.Decode(&cf)
+	derr := dec.Decode(&cf)
+	if derr != nil {
+		return cf, nil, derr
+	}
 
 	// Create a list of directories
 	start, err := time.Parse("2006.01", cf.Start)

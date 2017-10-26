@@ -12,13 +12,17 @@
 package gobgpdump
 
 import (
-	"encoding/gob"
+	//"encoding/gob"
 	"encoding/json"
 	"fmt"
 	mrt "github.com/CSUNetSec/protoparse/protocol/mrt"
 	util "github.com/CSUNetSec/protoparse/util"
-	radix "github.com/armon/go-radix"
+	gr "github.com/armon/go-radix"
 	"io"
+	"math"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -30,6 +34,7 @@ import (
 type Formatter interface {
 	format(*mrt.MrtBufferStack, MBSInfo) (string, error)
 	summarize()
+	setBucketer(Bucketer)
 }
 
 // This contains miscellaneous info for the MBS structure
@@ -45,15 +50,23 @@ func NewMBSInfo(file string, msg int) MBSInfo {
 // A simple text representation for the dump.
 // The only formatter that needs the msgnum
 type TextFormatter struct {
+	bm     Bucketer
 	msgNum int
 }
 
 func NewTextFormatter() *TextFormatter {
-	return &TextFormatter{0}
+	return &TextFormatter{
+		msgNum: 0,
+	}
+}
+
+func (t *TextFormatter) setBucketer(a Bucketer) {
+	t.bm = a
 }
 
 func (t *TextFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
-	ret := fmt.Sprintf("[%d] MRT Header: %s\n", t.msgNum, mbs.MrthBuf)
+	b := t.bm.GetBucket(getTimestamp(mbs))
+	ret := fmt.Sprintf("[%d][Bucket:%d] MRT Header: %s\n", t.msgNum, b, mbs.MrthBuf)
 	ret += fmt.Sprintf("BGP4MP Header: %s\n", mbs.Bgp4mpbuf)
 	ret += fmt.Sprintf("BGP Header: %s\n", mbs.Bgphbuf)
 	ret += fmt.Sprintf("BGP Update: %s\n\n", mbs.Bgpupbuf)
@@ -65,40 +78,57 @@ func (t *TextFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, erro
 func (t *TextFormatter) summarize() {}
 
 // Formats each update as a JSON message
-type JSONFormatter struct{}
-
-func NewJSONFormatter() JSONFormatter {
-	return JSONFormatter{}
+type JSONFormatter struct {
+	bm Bucketer
 }
 
-func (j JSONFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
+func NewJSONFormatter() *JSONFormatter {
+	return &JSONFormatter{}
+}
+
+func (j *JSONFormatter) setBucketer(a Bucketer) {
+	j.bm = a
+}
+
+func (j *JSONFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
 	mbsj, err := json.Marshal(mbs)
 	return string(mbsj) + "\n", err
 }
 
 // The JSON formatter doesn't need to summarize
-func (j JSONFormatter) summarize() {}
+func (j *JSONFormatter) summarize() {}
 
 // Applies no formatting to the data
 // But data is decompressed, may need to fix that
 // However, golang bz2 doesn't have compression features
-type IdentityFormatter struct{}
-
-func NewIdentityFormatter() IdentityFormatter {
-	return IdentityFormatter{}
+type IdentityFormatter struct {
+	bm Bucketer
 }
 
-func (id IdentityFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
+func NewIdentityFormatter() *IdentityFormatter {
+	return &IdentityFormatter{}
+}
+
+func (id *IdentityFormatter) setBucketer(a Bucketer) {
+	id.bm = a
+}
+
+func (id *IdentityFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
 	return string(mbs.GetRawMessage()), nil
 }
 
 // No summarization needed
-func (id IdentityFormatter) summarize() {}
+func (id *IdentityFormatter) summarize() {}
 
 type PrefixHistory struct {
 	Pref   string
 	info   MBSInfo
 	Events []PrefixEvent
+}
+
+type PrefixHistory1 struct {
+	info   MBSInfo
+	Events []PrefixEvent1
 }
 
 func NewPrefixHistory(pref string, info MBSInfo, firstTime time.Time, advert bool, asp []uint32) *PrefixHistory {
@@ -108,6 +138,10 @@ func NewPrefixHistory(pref string, info MBSInfo, firstTime time.Time, advert boo
 
 func (ph *PrefixHistory) addEvent(timestamp time.Time, advert bool, asp []uint32) {
 	ph.Events = append(ph.Events, PrefixEvent{timestamp, advert, asp})
+}
+
+func (ph *PrefixHistory1) addEvent(timestamp time.Time, advert bool, asp []uint32, pref string, key string) {
+	ph.Events = append(ph.Events, PrefixEvent1{timestamp, advert, asp, pref, key})
 }
 
 func (ph *PrefixHistory) String() string {
@@ -125,12 +159,21 @@ type PrefixEvent struct {
 	ASPath     []uint32
 }
 
+type PrefixEvent1 struct {
+	Timestamp  time.Time
+	Advertized bool
+	ASPath     []uint32
+	Prefix     string
+	key        string
+}
+
 // In original gobgpdump, the List and Series are the same struct.
 // Consider two separate structs
 
 // UniquePrefixList will look at all incoming messages, and output
 // only the top level prefixes seen.
 type UniquePrefixList struct {
+	bm       Bucketer
 	output   io.Writer // This should only be used in summarize
 	mux      *sync.Mutex
 	prefixes map[string]interface{}
@@ -142,6 +185,10 @@ func NewUniquePrefixList(fd io.Writer) *UniquePrefixList {
 	upl.mux = &sync.Mutex{}
 	upl.prefixes = make(map[string]interface{})
 	return &upl
+}
+
+func (upl *UniquePrefixList) setBucketer(a Bucketer) {
+	upl.bm = a
 }
 
 func (upl *UniquePrefixList) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (string, error) {
@@ -192,8 +239,6 @@ func (upl *UniquePrefixList) addRoutes(rts []Route, info MBSInfo, timestamp time
 
 // All output is done in this function
 func (upl *UniquePrefixList) summarize() {
-	deleteChildPrefixes(upl.prefixes)
-
 	// Whatever is left should be output
 	for _, value := range upl.prefixes {
 		ph := value.(*PrefixHistory)
@@ -206,21 +251,33 @@ func (upl *UniquePrefixList) summarize() {
 // rather than just a list, it will output a gob file containing each
 // prefix and every event seen associated with that prefix
 type UniquePrefixSeries struct {
-	output   io.Writer
-	mux      *sync.Mutex
-	prefixes map[string]interface{}
+	bm               Bucketer
+	output           io.Writer
+	mux              *sync.Mutex
+	prefixes         map[string]*PrefixHistory
+	bucketedPrefixes [][]PrefixEvent1
 }
 
 func NewUniquePrefixSeries(fd io.Writer) *UniquePrefixSeries {
 	ups := UniquePrefixSeries{}
 	ups.output = fd
 	ups.mux = &sync.Mutex{}
-	ups.prefixes = make(map[string]interface{})
+	ups.prefixes = make(map[string]*PrefixHistory, 0)
+	ups.bucketedPrefixes = make([][]PrefixEvent1, 0)
 	return &ups
+}
+
+func (ups *UniquePrefixSeries) setBucketer(a Bucketer) {
+	ups.bm = a
 }
 
 func (ups *UniquePrefixSeries) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (string, error) {
 	timestamp := getTimestamp(mbs)
+	bi := ups.bm.GetBucket(timestamp)
+	//this will keep bucketedPrefixes and ups.bm.buckets being same sized
+	for cbi := len(ups.bucketedPrefixes); cbi <= bi; cbi++ {
+		ups.bucketedPrefixes = append(ups.bucketedPrefixes, make([]PrefixEvent1, 0))
+	}
 
 	advRoutes, err := getAdvertizedPrefixes(mbs)
 	asp, errasp := getASPath(mbs)
@@ -229,17 +286,17 @@ func (ups *UniquePrefixSeries) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (str
 		asp = []uint32{}
 	}
 	if err == nil {
-		ups.addRoutes(advRoutes, inf, timestamp, true, asp)
+		ups.addRoutes(advRoutes, inf, timestamp, true, asp, bi)
 	}
 
 	wdnRoutes, err := getWithdrawnPrefixes(mbs)
 	if err == nil {
-		ups.addRoutes(wdnRoutes, inf, timestamp, false, asp)
+		ups.addRoutes(wdnRoutes, inf, timestamp, false, nil, bi)
 	}
 	return "", nil
 }
 
-func (ups *UniquePrefixSeries) addRoutes(rts []Route, info MBSInfo, timestamp time.Time, advert bool, asp []uint32) {
+func (ups *UniquePrefixSeries) addRoutes(rts []Route, info MBSInfo, timestamp time.Time, advert bool, asp []uint32, bucketInd int) {
 	for _, route := range rts {
 		//This route causes a lot of trouble
 		if route.Mask == 1 {
@@ -248,69 +305,125 @@ func (ups *UniquePrefixSeries) addRoutes(rts []Route, info MBSInfo, timestamp ti
 
 		key := util.IpToRadixkey(route.IP, route.Mask)
 		ups.mux.Lock()
-		if ups.prefixes[key] == nil {
-			ups.prefixes[key] = NewPrefixHistory(route.String(), info, timestamp, advert, asp)
-		} else {
-			ups.prefixes[key].(*PrefixHistory).addEvent(timestamp, advert, asp)
-		}
+		//if ups.bucketedPrefixes[bucketInd][key] == nil {
+		//	ups.bucketPrefixes[bucketInd][key] = NewPrefixHistory(route.String(), info, timestamp, advert, asp)
+		//} else {
+		//ups.bucketPrefixes[bucketInd].addEvent(timestamp, advert, asp)
+		ups.bucketedPrefixes[bucketInd] = append(ups.bucketedPrefixes[bucketInd], PrefixEvent1{timestamp, advert, asp, route.String(), key})
+		//}
 		ups.mux.Unlock()
 	}
 }
 
-// All output is done here
-func (ups *UniquePrefixSeries) summarize() {
-	g := gob.NewEncoder(ups.output)
-	var err error
-
-	deleteChildPrefixes(ups.prefixes)
-	// Whatever is left are top-level prefixes and should be
-	// encoded
-	for _, value := range ups.prefixes {
-		ph := value.(*PrefixHistory)
-		err = g.Encode(ph)
-		if err != nil {
-			fmt.Printf("Error marshalling gob:%s\n", err)
-		}
-	}
-}
-
-type PrefixWalker struct {
-	top      bool
-	prefixes map[string]interface{}
-}
-
-func (p *PrefixWalker) subWalk(s string, v interface{}) bool {
-	if p.top {
-		p.top = false
-	} else {
-		delete(p.prefixes, s)
-	}
+func printTreeFun(s string, v interface{}) bool {
+	ni, _ := numips(v.(string))
+	fmt.Printf("%s->ips:%d\n", v.(string), ni)
 	return false
 }
 
-// This function will delete subprefixes from the provided map
-func deleteChildPrefixes(pm map[string]interface{}) {
-	pw := &PrefixWalker{false, pm}
-
-	rTree := radix.New()
-	for key, value := range pm {
-		rTree.Insert(key, value)
+// All output is done here
+func (ups *UniquePrefixSeries) summarize() {
+	//var err error
+	allEventsTree := gr.New()
+	for _, bp := range ups.bucketedPrefixes {
+		sortPrefixEventsByTime(bp)
 	}
+	totadv, totwdr, totdel, totadd, totupd, buckadv, buckwdr := 0, 0, 0, 0, 0, 0, 0
+	totips := int64(0)
+	fmt.Printf("bucket\ttotadv\ttotwdr\ttotdel\ttotadd\ttotupd\tbuckadv\tbuckwdr\tprefsKnown\tnumips\n")
+	for i, bp := range ups.bucketedPrefixes {
+		buckadv, buckwdr = 0, 0
+		for _, ev := range bp {
+			numips, _ := numips(ev.Prefix)
+			if ev.Advertized {
+				totadv += 1
+				buckadv += 1
+				_, updated := allEventsTree.Insert(ev.key, ev.Prefix)
+				if !updated {
+					totadd += 1
+					totips += int64(numips)
+				} else {
+					totupd += 1
+				}
+			} else {
+				totwdr += 1
+				buckwdr += 1
+				totdel += allEventsTree.DeletePrefix(ev.key)
+				totips -= int64(numips)
+			}
+		}
+		fmt.Printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i, totadv, totwdr, totdel, totadd, totupd, buckadv, buckwdr, allEventsTree.Len(), totips)
+		//allEventsTree.Walk(printTreeFun)
+	}
+	//fmt.Printf("bucketer:%s\n", ups.bm)
+	//g := gob.NewEncoder(ups.output)
+	//encode the whole map so we don't have to recreate the keys
+	//err = g.Encode(ups.prefixes)
+	//if err != nil {
+	//	fmt.Printf("Error marshalling gob:%s\n", err)
+	//}
+}
 
-	rTree.Walk(func(s string, v interface{}) bool {
-		pw.top = true
-		rTree.WalkPrefix(s, pw.subWalk)
+func numips(a string) (int, error) {
+	erripstr := fmt.Errorf("malformed str: %s", a)
+	parts := strings.Split(a, "/")
+	if len(parts) != 2 {
+		return 0, erripstr
+	}
+	mask, err := strconv.ParseUint(parts[1], 10, 8)
+	if err != nil {
+		return 0, err
+	}
+	if strings.Contains(parts[0], ":") { //v6
+		//return math.Pow(2, 128-int(mask)) - 2, nil
+		return 0, nil //for now
+	} else { //v4
+		return int(math.Pow(2, float64(32-int(mask))) - 2), nil
+	}
+}
+
+func sortPrefixEventsByTime(a []PrefixEvent1) {
+	sort.Slice(a, func(i, j int) bool {
+		if a[i].Timestamp.Before(a[j].Timestamp) {
+			return true
+		}
 		return false
 	})
 }
 
+/*
+func sortPrefixHistoriesByTime(a map[string]*PrefixHistory) {
+	for k, v := range a {
+		sortPrefixEventsByTime(v.Events)
+		a[k] = v
+	}
+}*/
+
+/*
+func PrefixTreeAsSortedSlice(a map[string]*PrefixHistory) (ret []PrefixRadixKeyEvent) {
+	for k, v := range a {
+		for _, ev := range v {
+			ret = append(ret, PrefixRadixKeyEvent{ev, k})
+		}
+	}
+	sortPrefixEventsByTime(ret)
+}
+*/
 type DayFormatter struct {
+	bm     Bucketer
 	output io.Writer
 	hourCt []int
 }
 
+func (d *DayFormatter) setBucketer(a Bucketer) {
+	d.bm = a
+}
+
 func NewDayFormatter(fd io.Writer) *DayFormatter {
-	return &DayFormatter{fd, make([]int, 24)}
+	return &DayFormatter{
+		output: fd,
+		hourCt: make([]int, 24),
+	}
 }
 
 func (d *DayFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
