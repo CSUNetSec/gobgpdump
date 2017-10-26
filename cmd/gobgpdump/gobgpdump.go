@@ -26,6 +26,7 @@ func init() {
 	flag.BoolVar(&configFile.Conf, "conf", false, "draw configuration from a file")
 	flag.BoolVar(&configFile.Debug, "debug", false, "set the debug flag")
 	flag.IntVar(&configFile.Wc, "wc", 1, "number of worker threads to use (max 16)")
+	flag.IntVar(&configFile.BucketMins, "bm", 0, "number of minutes to bucket events in (default 0. turned off)")
 }
 
 func main() {
