@@ -320,8 +320,9 @@ func (ups *UniquePrefixSeries) addRoutes(rts []Route, info MBSInfo, timestamp ti
 }
 
 func printTreeFun(s string, v interface{}) bool {
-	ni, _ := numips(v.(PrefixEvent1).Prefix)
-	fmt.Printf("%s->ips:%d\n", v.(PrefixEvent1).Prefix, ni)
+	pev := v.(PrefixEvent1)
+	ni, _ := numips(pev.Prefix)
+	fmt.Printf("Pref:%s\tnumips:%d\ttime:%s\tcollector:%s\tpeer:%s\n", pev.Prefix, ni, pev.Timestamp, pev.Collector, pev.Peer)
 	return false
 }
 
@@ -335,12 +336,12 @@ func (ups *UniquePrefixSeries) summarize() {
 	for _, bp := range ups.bucketedPrefixes {
 		for _, ev := range bp {
 			if ev.Advertized {
-				parenkey, parentpref, havelp := allEventsTree.LongestPrefix(ev.key)
+				_, parentpref, havelp := allEventsTree.LongestPrefix(ev.key)
 				if !havelp {
 					allEventsTree.Insert(ev.key, ev)
 				} else {
 					if ev.Prefix != parentpref.(PrefixEvent1).Prefix {
-						fmt.Printf("not adding %s:%s cause i have %v:%s\n", ev.Prefix, ev.key, parentpref.(PrefixEvent1), parenkey)
+						//fmt.Printf("not adding %s:%s cause i have %v:%s\n", ev.Prefix, ev.key, parentpref.(PrefixEvent1), parenkey)
 					}
 				}
 			}
