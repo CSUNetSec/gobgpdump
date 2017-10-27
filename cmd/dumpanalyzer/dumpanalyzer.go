@@ -9,7 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/CSUNetSec/gobgpdump"
-	"io"
+	rad "github.com/armon/go-radix"
 	"os"
 	"sort"
 	"time"
@@ -59,18 +59,18 @@ func (a *asCountSlice) Add(as uint32) {
 */
 
 type PrefixDateValues struct {
-	date          time.Time           //bucket
-	prefAdvCounts map[string]uint64   //this will be populated in the end
-	prefWdrCounts map[string]uint64   //this will be populated in the end
-	peerAdv       map[string][]uint32 //advertizement events where int32 is the peer ASN
+	date time.Time //bucket
+	//prefAdvCounts map[string]uint64   //this will be populated in the end
+	//prefWdrCounts map[string]uint64   //this will be populated in the end
+	//peerAdv       map[string][]uint32 //advertizement events where int32 is the peer ASN
 }
 
 func NewPrefixDateValues(date time.Time) PrefixDateValues {
 	return PrefixDateValues{
 		date,
-		make(map[string]uint64),
-		make(map[string]uint64),
-		make(map[string][]uint32),
+		//	make(map[string]uint64),
+		//	make(map[string]uint64),
+		//	make(map[string][]uint32),
 	}
 }
 
@@ -85,10 +85,89 @@ type prefEvSums struct {
 	peerAses []asCount
 }
 
+type event struct {
+	prefix    string
+	withdrawn bool
+	time      time.Time
+	asp       []uint32
+	bucket    int
+}
+
+type evlist []event
+
+func (e evlist) PeerAses() (ret []uint32) {
+	ret = make([]uint32, 0)
+	for _, ev := range e {
+		if len(ev.asp) > 2 { //parent AS and us
+			pas := ev.asp[len(ev.asp)-2]
+			if !uint32InSlice(pas, ret) {
+				ret = append(ret, pas)
+			}
+		}
+	}
+	return
+}
+
+func (e evlist) Prefixes() (ret []string) {
+	uniqpref := make(map[string]bool)
+	ret = make([]string, 0)
+	for _, ev := range e {
+		if _, ok := uniqpref[ev.prefix]; !ok {
+			ret = append(ret, ev.prefix)
+			uniqpref[ev.prefix] = true
+		}
+	}
+	return
+}
+
+func (e evlist) FilterBucket(i int) (ret evlist) {
+	ret = make([]event, 0)
+	for _, ev := range e {
+		if ev.bucket == i {
+			ret = append(ret, ev)
+		}
+	}
+	return
+}
+
+func (e evlist) NumEventsFromPeer(a uint32) int {
+	count := 0
+	for _, ev := range e {
+		if len(ev.asp) > 2 { //parent AS and us
+			pas := ev.asp[len(ev.asp)-2]
+			if pas == a {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func (e evlist) NumEventsFromPrefix(a string) int {
+	count := 0
+	for _, ev := range e {
+		if ev.prefix == a {
+			count++
+		}
+	}
+	return count
+}
+func (e evlist) NumWithdrawn() int {
+	count := 0
+	for _, ev := range e {
+		if ev.withdrawn {
+			count++
+		}
+	}
+	return count
+}
+
 type PrefixHistoryMgr struct {
-	buckets  []PrefixDateValues
-	delta    time.Duration
-	prefSeen []prefEvSums
+	buckets    []PrefixDateValues
+	delta      time.Duration
+	prefSeen   []prefEvSums
+	events     evlist
+	PrefEvents map[string]*gobgpdump.PrefixHistory
 }
 
 func NewPrefixHistoryMgr(a time.Duration) *PrefixHistoryMgr {
@@ -96,6 +175,8 @@ func NewPrefixHistoryMgr(a time.Duration) *PrefixHistoryMgr {
 		[]PrefixDateValues{},
 		a,
 		make([]prefEvSums, 0),
+		make([]event, 0),
+		make(map[string]*gobgpdump.PrefixHistory),
 	}
 }
 
@@ -143,13 +224,13 @@ func asIndexInAsCountSlice(a uint32, slice []asCount) int {
 
 func (p *PrefixHistoryMgr) Add(a gobgpdump.PrefixHistory) {
 	//update the total events seen for this prefix.
-	var pes prefEvSums
+	/*var pes prefEvSums
 	pes.events = pes.events + uint64(len(a.Events))
 	pes.prefix = a.Pref
 	for _, ev := range a.Events {
 		bucket_ind := p.GetBucket(ev.Timestamp)
 		//fmt.Printf("event with ts:%s will go to bucket with ts:%s from %d buckets\n", ev.Timestamp, p.buckets[bucket_ind].date, len(p.buckets))
-		//increase prefix count
+		///increase prefix count
 		buck := p.buckets[bucket_ind]
 		if ev.Advertized {
 			if count, ok := buck.prefAdvCounts[a.Pref]; ok {
@@ -185,6 +266,24 @@ func (p *PrefixHistoryMgr) Add(a gobgpdump.PrefixHistory) {
 	}
 	//update it in the end
 	p.prefSeen = append(p.prefSeen, pes)
+	*/
+	for _, ev := range a.Events {
+		bucket_ind := p.GetBucket(ev.Timestamp)
+		nev := event{
+			prefix:    a.Pref,
+			withdrawn: true,
+			time:      ev.Timestamp,
+			asp:       []uint32{},
+			bucket:    bucket_ind,
+		}
+		if ev.Advertized {
+			nev.withdrawn = false
+			nev.asp = make([]uint32, len(ev.ASPath))
+			copy(nev.asp, ev.ASPath)
+
+		}
+		p.events = append(p.events, nev)
+	}
 }
 
 type asPercentage struct {
@@ -211,10 +310,79 @@ func (p *PrefixHistoryMgr) Summarize() {
 		topk++
 	}*/
 	//}
+	//p.TopKPrefixes(10)
 	p.PrintSums()
+	fmt.Printf("#peerases bucketid peerAsid no.updates ASname")
+	distinctAses := make(map[uint32]int)
+	resolveAs := func(as uint32, dict map[uint32]int) int {
+		if resolved, ok := dict[as]; ok {
+			return resolved
+		} else {
+			dict[as] = len(dict) + 1
+			return len(dict)
+		}
+	}
+	//distinctPrefixes := make(map[string]int)
+	/*resolvePrefix := func(prefix string, dict map[string]int) int {
+		if resolved, ok := dict[prefix]; ok {
+			return resolved
+		} else {
+			dict[prefix] = len(dict) + 1
+			return len(dict)
+		}
+
+	}*/
+	/*
+		resolveAses := func(a []uint32, dict map[uint32]int) []int {
+			ret := make([]int, 0)
+			for _, as := range a {
+				asi := resolveAs(as, dict)
+				ret = append(ret, asi)
+			}
+			return ret
+		}
+	*/
+
+	//fmt.Printf("total events:%d\n", len(p.events))
+	//fmt.Printf("all peers:%v\n", resolveAses(p.events.PeerAses(), distinctAses))
+	allpeers := p.events.PeerAses()
+	allprefs := p.events.Prefixes()
+	for bi, _ := range p.buckets {
+		subevents := p.events.FilterBucket(bi)
+		for _, pas := range allpeers {
+			fmt.Printf("%d %d %d %s\n", bi, resolveAs(pas, distinctAses), subevents.NumEventsFromPeer(pas), fmt.Sprintf("as%d", pas))
+		}
+		fmt.Println("")
+	}
+	fmt.Printf("#prefixcounts bucketid prefixid no.updates prefixname")
+	for bi, _ := range p.buckets {
+		subevents := p.events.FilterBucket(bi)
+		for pi, pref := range allprefs {
+			fmt.Printf("%d %d %d %s\n", bi, pi, subevents.NumEventsFromPrefix(pref), fmt.Sprintf("%s", pref))
+		}
+		fmt.Println("")
+	}
 }
 
+/*
 func (p *PrefixHistoryMgr) TopKPrefixes(k int) {
+	//totPrefCount := make(map[string]countPercentage)
+	//count all prefixes
+	for _, e := range p.events {
+		if foundPrefix, ok := totPrefCount[e.prefix]; ok {
+			foundPrefix.count++
+			totPrefCount[e.prefix] = foundPrefix
+		} else {
+			//totPrefCount[e.prefix] = countId{1, float32(0)}
+		}
+	}
+	//record the percentage
+	totNumPref := len(totPrefCount)
+	for k, v := range totPrefCount {
+		v.percentage = float32(v.count) / float32(totNumPref) * float32(100)
+		totPrefCount[k] = v
+	}
+	//sort b
 	evacc := uint64(0)
 	for _, pref := range p.prefSeen {
 		evacc = evacc + pref.events
@@ -223,7 +391,7 @@ func (p *PrefixHistoryMgr) TopKPrefixes(k int) {
 	sort.Slice(p.prefSeen, func(i, j int) bool { return p.prefSeen[i].events > p.prefSeen[j].events })
 	fmt.Printf("top %d prefixes by event count:\n", k)
 	for i := 0; i < k; i++ {
-		fmt.Printf("\t%s %d %.4f%%\n", p.prefSeen[i].prefix, p.prefSeen[i].events, float32(p.prefSeen[i].events)/float32(evacc))
+		fmt.Printf("\t%s %d %.4f%%\n", p.prefSeen[i].prefix, p.prefSeen[i].events, float32(p.prefSeen[i].events)/float32(evacc)*float32(100))
 	}
 	sort.Slice(p.prefSeen, func(i, j int) bool { return len(p.prefSeen[i].peerAses) > len(p.prefSeen[j].peerAses) })
 	fmt.Printf("top %d prefixes by number of peers advertized\n", k)
@@ -246,17 +414,14 @@ func (p *PrefixHistoryMgr) TopKPrefixes(k int) {
 	}
 
 }
+*/
 
 func (p *PrefixHistoryMgr) PrintSums() {
-	for _, b := range p.buckets {
-		advcount, wdrcount := uint64(0), uint64(0)
-		for _, pcount := range b.prefAdvCounts {
-			advcount = advcount + pcount
-		}
-		for _, pcount := range b.prefWdrCounts {
-			wdrcount = wdrcount + pcount
-		}
-		fmt.Printf("%s\t%d\t%d\n", b.date.Format(timeFrmt), advcount, wdrcount)
+	fmt.Printf("#sums date no.updates no.withdraws")
+	for bi, b := range p.buckets {
+		subevents := p.events.FilterBucket(bi)
+		nwdr := subevents.NumWithdrawn()
+		fmt.Printf("%s\t%d\t%d\n", b.date.Format(timeFrmt), len(subevents)-nwdr, nwdr)
 	}
 }
 
@@ -292,20 +457,61 @@ func main() {
 	}
 	defer gfd.Close()
 	dec := gob.NewDecoder(gfd)
-	count := 0
 	phmgr := NewPrefixHistoryMgr(dur)
-	for {
-		ph := gobgpdump.PrefixHistory{}
-		decerr := dec.Decode(&ph)
-		if decerr == io.EOF {
-			break
-		}
-		if decerr != nil {
-			fmt.Errorf("decoding error:%s. decoded:%d entries\n", decerr, count)
-			return
-		}
-		phmgr.Add(ph)
-		count++
+	decerr := dec.Decode(&phmgr.PrefEvents)
+	if decerr != nil {
+		fmt.Errorf("decoding error:%s. decoded:%d entries\n", decerr)
+		return
 	}
-	phmgr.Summarize()
+	fmt.Printf("got %d prefixes\n", len(phmgr.PrefEvents))
+	fulltree := rad.New()
+	for k, v := range phmgr.PrefEvents {
+		fmt.Printf("pref:%s events:%+v\n", v.Pref, v.Events)
+		fulltree.Insert(k, v)
+	}
+	getMinMaxdate := func(a *rad.Tree) (time.Time, time.Time) {
+		var (
+			min, max time.Time
+			first    bool
+		)
+		first = true
+		kvdate := func(s string, v interface{}) bool {
+			evlist := v.(*gobgpdump.PrefixHistory).Events
+			if len(evlist) > 1 {
+				if first {
+					min, max = evlist[0].Timestamp, evlist[len(evlist)-1].Timestamp
+					first = false
+				} else {
+					if evlist[0].Timestamp.Before(min) {
+						min = evlist[0].Timestamp
+					}
+					if evlist[len(evlist)-1].Timestamp.After(max) {
+						max = evlist[len(evlist)-1].Timestamp
+					}
+				}
+			}
+			return false
+		}
+		fulltree.Walk(kvdate)
+		return min, max
+
+	}
+	dateA, dateB := getMinMaxdate(fulltree)
+	fmt.Printf("min date:%s max:%s\n", dateA, dateB)
+	/*
+		for {
+			ph := gobgpdump.PrefixHistory{}
+			decerr := dec.Decode(&ph)
+			if decerr == io.EOF {
+				break
+			}
+			if decerr != nil {
+				fmt.Errorf("decoding error:%s. decoded:%d entries\n", decerr, count)
+				return
+			}
+			phmgr.Add(ph)
+			count++
+		}
+		phmgr.Summarize()
+	*/
 }
