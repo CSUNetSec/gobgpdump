@@ -78,6 +78,11 @@ func getCollector(mbs *mrt.MrtBufferStack) net.IP {
 	return net.IP(util.GetIP(b4mph.LocalIp))
 }
 
+func getPeer(mbs *mrt.MrtBufferStack) net.IP {
+	b4mph := mbs.Bgp4mpbuf.(protoparse.BGP4MPHeaderer).GetHeader()
+	return net.IP(util.GetIP(b4mph.PeerIp))
+}
+
 type Route struct {
 	IP   net.IP
 	Mask uint8

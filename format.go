@@ -140,8 +140,8 @@ func (ph *PrefixHistory) addEvent(timestamp time.Time, advert bool, asp []uint32
 	ph.Events = append(ph.Events, PrefixEvent{timestamp, advert, asp})
 }
 
-func (ph *PrefixHistory1) addEvent(timestamp time.Time, advert bool, asp []uint32, pref string, key string) {
-	ph.Events = append(ph.Events, PrefixEvent1{timestamp, advert, asp, pref, key})
+func (ph *PrefixHistory1) addEvent(timestamp time.Time, advert bool, asp []uint32, pref string, key string, peer string, col string) {
+	ph.Events = append(ph.Events, PrefixEvent1{timestamp, advert, asp, pref, key, peer, col})
 }
 
 func (ph *PrefixHistory) String() string {
@@ -165,6 +165,8 @@ type PrefixEvent1 struct {
 	ASPath     []uint32
 	Prefix     string
 	key        string
+	Peer       string
+	Collector  string
 }
 
 // In original gobgpdump, the List and Series are the same struct.
@@ -285,18 +287,20 @@ func (ups *UniquePrefixSeries) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (str
 		//maybe just a withdrawn message? make it empty.
 		asp = []uint32{}
 	}
+	colstr := getCollector(mbs).String()
+	peerstr := getPeer(mbs).String()
 	if err == nil {
-		ups.addRoutes(advRoutes, inf, timestamp, true, asp, bi)
+		ups.addRoutes(advRoutes, inf, timestamp, true, asp, bi, peerstr, colstr)
 	}
 
 	wdnRoutes, err := getWithdrawnPrefixes(mbs)
 	if err == nil {
-		ups.addRoutes(wdnRoutes, inf, timestamp, false, nil, bi)
+		ups.addRoutes(wdnRoutes, inf, timestamp, false, nil, bi, peerstr, colstr)
 	}
 	return "", nil
 }
 
-func (ups *UniquePrefixSeries) addRoutes(rts []Route, info MBSInfo, timestamp time.Time, advert bool, asp []uint32, bucketInd int) {
+func (ups *UniquePrefixSeries) addRoutes(rts []Route, info MBSInfo, timestamp time.Time, advert bool, asp []uint32, bucketInd int, peerstr string, colstr string) {
 	for _, route := range rts {
 		//This route causes a lot of trouble
 		if route.Mask == 1 {
@@ -309,15 +313,15 @@ func (ups *UniquePrefixSeries) addRoutes(rts []Route, info MBSInfo, timestamp ti
 		//	ups.bucketPrefixes[bucketInd][key] = NewPrefixHistory(route.String(), info, timestamp, advert, asp)
 		//} else {
 		//ups.bucketPrefixes[bucketInd].addEvent(timestamp, advert, asp)
-		ups.bucketedPrefixes[bucketInd] = append(ups.bucketedPrefixes[bucketInd], PrefixEvent1{timestamp, advert, asp, route.String(), key})
+		ups.bucketedPrefixes[bucketInd] = append(ups.bucketedPrefixes[bucketInd], PrefixEvent1{timestamp, advert, asp, route.String(), key, peerstr, colstr})
 		//}
 		ups.mux.Unlock()
 	}
 }
 
 func printTreeFun(s string, v interface{}) bool {
-	ni, _ := numips(v.(string))
-	fmt.Printf("%s->ips:%d\n", v.(string), ni)
+	ni, _ := numips(v.(PrefixEvent1).Prefix)
+	fmt.Printf("%s->ips:%d\n", v.(PrefixEvent1).Prefix, ni)
 	return false
 }
 
@@ -328,33 +332,48 @@ func (ups *UniquePrefixSeries) summarize() {
 	for _, bp := range ups.bucketedPrefixes {
 		sortPrefixEventsByTime(bp)
 	}
-	totadv, totwdr, totdel, totadd, totupd, buckadv, buckwdr := 0, 0, 0, 0, 0, 0, 0
-	totips := int64(0)
-	fmt.Printf("bucket\ttotadv\ttotwdr\ttotdel\ttotadd\ttotupd\tbuckadv\tbuckwdr\tprefsKnown\tnumips\n")
-	for i, bp := range ups.bucketedPrefixes {
-		buckadv, buckwdr = 0, 0
+	for _, bp := range ups.bucketedPrefixes {
 		for _, ev := range bp {
-			numips, _ := numips(ev.Prefix)
 			if ev.Advertized {
-				totadv += 1
-				buckadv += 1
-				_, updated := allEventsTree.Insert(ev.key, ev.Prefix)
-				if !updated {
-					totadd += 1
-					totips += int64(numips)
+				parenkey, parentpref, havelp := allEventsTree.LongestPrefix(ev.key)
+				if !havelp {
+					allEventsTree.Insert(ev.key, ev)
 				} else {
-					totupd += 1
+					if ev.Prefix != parentpref.(PrefixEvent1).Prefix {
+						fmt.Printf("not adding %s:%s cause i have %v:%s\n", ev.Prefix, ev.key, parentpref.(PrefixEvent1), parenkey)
+					}
 				}
-			} else {
-				totwdr += 1
-				buckwdr += 1
-				totdel += allEventsTree.DeletePrefix(ev.key)
-				totips -= int64(numips)
 			}
 		}
-		fmt.Printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i, totadv, totwdr, totdel, totadd, totupd, buckadv, buckwdr, allEventsTree.Len(), totips)
-		//allEventsTree.Walk(printTreeFun)
 	}
+	allEventsTree.Walk(printTreeFun)
+	/*
+		totadv, totwdr, totdel, totadd, totupd, buckadv, buckwdr := 0, 0, 0, 0, 0, 0, 0
+		totips := int64(0)
+		fmt.Printf("bucket\ttotadv\ttotwdr\ttotdel\ttotadd\ttotupd\tbuckadv\tbuckwdr\tprefsKnown\tnumips\n")
+		for i, bp := range ups.bucketedPrefixes {
+			buckadv, buckwdr = 0, 0
+			for _, ev := range bp {
+				numips, _ := numips(ev.Prefix)
+				if ev.Advertized {
+					totadv += 1
+					buckadv += 1
+					_, updated := allEventsTree.Insert(ev.key, ev.Prefix)
+					if !updated {
+						totadd += 1
+						totips += int64(numips)
+					} else {
+						totupd += 1
+					}
+				} else {
+					totwdr += 1
+					buckwdr += 1
+					totdel += allEventsTree.DeletePrefix(ev.key)
+					totips -= int64(numips)
+				}
+			}
+			fmt.Printf("%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", i, totadv, totwdr, totdel, totadd, totupd, buckadv, buckwdr, allEventsTree.Len(), totips)
+		}*/
 	//fmt.Printf("bucketer:%s\n", ups.bm)
 	//g := gob.NewEncoder(ups.output)
 	//encode the whole map so we don't have to recreate the keys
