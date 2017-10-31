@@ -86,13 +86,21 @@ func (o *observectx) parseBgpdumpLine(line string) error {
 }
 
 func (o *observectx) summarize() {
+	totips, seenips := 0, 0
+	for _, v := range o.regPrefs {
+		p := v.(IpMask)
+		totips += numips(p.mask)
+	}
+	fmt.Printf("prefix\t\tparentprefix\t\tnips\tparentnips\tcov\n")
 	for k, v := range o.foundPrefs {
 		parent := o.regPrefs[k].(IpMask)
 		nipparent := numips(parent.mask)
 		nipchild := numips(v.mask)
+		seenips += nipchild
 		percentage := float64(nipchild) / float64(nipparent)
-		fmt.Printf("prefix:%s (nips:%d) has observed parent:%s (nips:%d) cov:%.2f\n", v, nipchild, parent, nipparent, percentage)
+		fmt.Printf("%s\t%s\t\t%d\t%d\t\t%.2f\n", v, parent, nipchild, nipparent, percentage)
 	}
+	fmt.Printf("prefixes tracked:%d prefs discovered:%d perc of ips covered:%.5f\n", len(o.regPrefs), len(o.foundPrefs), float64(seenips)/float64(totips))
 }
 
 func main() {
@@ -118,7 +126,6 @@ func main() {
 			pfd.Close()
 			return
 		}
-		fmt.Printf("scanned:%+v\n", ipm)
 		key := util.IpToRadixkey(ipm.ip, ipm.mask)
 		if key != "" { //returned error (XXX return actual error)
 			octx.regPrefs[key] = ipm
