@@ -17,7 +17,7 @@ import (
 	"fmt"
 	mrt "github.com/CSUNetSec/protoparse/protocol/mrt"
 	util "github.com/CSUNetSec/protoparse/util"
-	gr "github.com/armon/go-radix"
+	//gr "github.com/armon/go-radix"
 	"io"
 	"math"
 	"sort"
@@ -258,6 +258,8 @@ type UniquePrefixSeries struct {
 	mux              *sync.Mutex
 	prefixes         map[string]*PrefixHistory
 	bucketedPrefixes [][]PrefixEvent1
+	bucketedPeerAses [][]uint32
+	allPeerAses      []uint32
 }
 
 func NewUniquePrefixSeries(fd io.Writer) *UniquePrefixSeries {
@@ -266,7 +268,18 @@ func NewUniquePrefixSeries(fd io.Writer) *UniquePrefixSeries {
 	ups.mux = &sync.Mutex{}
 	ups.prefixes = make(map[string]*PrefixHistory, 0)
 	ups.bucketedPrefixes = make([][]PrefixEvent1, 0)
+	ups.bucketedPeerAses = make([][]uint32, 0)
+	ups.allPeerAses = make([]uint32, 0)
 	return &ups
+}
+
+func uintInSlice(a uint32, slice []uint32) bool {
+	for i := range slice {
+		if a == slice[i] {
+			return true
+		}
+	}
+	return false
 }
 
 func (ups *UniquePrefixSeries) setBucketer(a Bucketer) {
@@ -279,6 +292,7 @@ func (ups *UniquePrefixSeries) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (str
 	//this will keep bucketedPrefixes and ups.bm.buckets being same sized
 	for cbi := len(ups.bucketedPrefixes); cbi <= bi; cbi++ {
 		ups.bucketedPrefixes = append(ups.bucketedPrefixes, make([]PrefixEvent1, 0))
+		ups.bucketedPeerAses = append(ups.bucketedPeerAses, make([]uint32, 0))
 	}
 
 	advRoutes, err := getAdvertizedPrefixes(mbs)
@@ -289,6 +303,15 @@ func (ups *UniquePrefixSeries) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (str
 	}
 	colstr := getCollector(mbs).String()
 	peerstr := getPeer(mbs).String()
+	if len(asp) > 2 {
+		pas := asp[len(asp)-2]
+		if !uintInSlice(pas, ups.allPeerAses) {
+			ups.mux.Lock()
+			ups.allPeerAses = append(ups.allPeerAses, pas)
+			ups.bucketedPeerAses[bi] = append(ups.bucketedPeerAses[bi], pas)
+			ups.mux.Unlock()
+		}
+	}
 	if err == nil {
 		ups.addRoutes(advRoutes, inf, timestamp, true, asp, bi, peerstr, colstr)
 	}
@@ -326,28 +349,68 @@ func printTreeFun(s string, v interface{}) bool {
 	return false
 }
 
+type asval struct {
+	as  uint32
+	val int
+}
+
 // All output is done here
 func (ups *UniquePrefixSeries) summarize() {
 	//var err error
-	allEventsTree := gr.New()
+	//allEventsTree := gr.New()
 	for _, bp := range ups.bucketedPrefixes {
 		sortPrefixEventsByTime(bp)
 	}
-	for _, bp := range ups.bucketedPrefixes {
+	prefmap := make(map[string]bool)
+	for bi, bp := range ups.bucketedPrefixes {
+		nums := make(map[uint32]int)
 		for _, ev := range bp {
-			if ev.Advertized {
-				_, parentpref, havelp := allEventsTree.LongestPrefix(ev.key)
-				if !havelp {
-					allEventsTree.Insert(ev.key, ev)
+			if len(ev.ASPath) > 1 {
+				as := ev.ASPath[len(ev.ASPath)-1]
+				if ev.Advertized {
+					if val, ok := nums[as]; ok {
+						nums[as] = val + 1
+					} else {
+						nums[as] = 1
+					}
 				} else {
-					if ev.Prefix != parentpref.(PrefixEvent1).Prefix {
-						//fmt.Printf("not adding %s:%s cause i have %v:%s\n", ev.Prefix, ev.key, parentpref.(PrefixEvent1), parenkey)
+					if val, ok := nums[as]; ok {
+						nums[as] = val - 1
+					} else {
+						nums[as] = -1
 					}
 				}
 			}
+			if ev.Advertized {
+				//_, parentpref, havelp := allEventsTree.LongestPrefix(ev.key)
+				//if !havelp {
+				//	allEventsTree.Insert(ev.key, ev)
+				//	} else {
+				//	if ev.Prefix != parentpref.(PrefixEvent1).Prefix {
+				//fmt.Printf("not adding %s:%s cause i have %v:%s\n", ev.Prefix, ev.key, parentpref.(PrefixEvent1), parenkey)
+				//}
+				//}
+				prefmap[ev.Prefix] = true //record all the prefixes in a map
+			}
 		}
+		asv := make([]asval, 0)
+		for as, vals := range nums {
+			asv = append(asv, asval{as: as, val: vals})
+		}
+		sort.Slice(asv, func(i, j int) bool { return asv[i].as < asv[j].as })
+		fmt.Printf("%d\t", bi)
+		for i := range asv {
+			fmt.Printf("%d\t\t%d\t\n", asv[i].as, asv[i].val)
+		}
+		fmt.Println("")
 	}
-	allEventsTree.Walk(printTreeFun)
+	for k, _ := range prefmap {
+		fmt.Fprintf(ups.output, "%s\n", k)
+	}
+	//allEventsTree.Walk(printTreeFun)
+	//for i := range ups.bucketedPeerAses {
+	//fmt.Fprintf(ups.output, "%d %d %d new peer ases:%v\n", i+1, len(ups.bucketedPeerAses[i]), len(ups.bucketedPrefixes[i]), ups.bucketedPeerAses[i])
+	//}
 	/*
 		totadv, totwdr, totdel, totadd, totupd, buckadv, buckwdr := 0, 0, 0, 0, 0, 0, 0
 		totips := int64(0)

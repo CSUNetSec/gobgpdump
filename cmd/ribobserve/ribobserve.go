@@ -9,16 +9,22 @@ import (
 	"math"
 	"net"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var (
-	preffile string
+	preffile   string
+	nworkers   int
+	bgpdumpbin string
 )
 
 func init() {
 	flag.StringVar(&preffile, "pf", "", "file name containing the prefixes")
+	flag.IntVar(&nworkers, "nw", 1, "number of workers")
+	flag.StringVar(&bgpdumpbin, "bin", "", "path of the bgpdump binary that the workers use to read RIBs")
 }
 
 type IpMask struct {
@@ -49,14 +55,20 @@ func str2IpMask(a string) (IpMask, error) {
 type observectx struct {
 	regPrefs    map[string]interface{}
 	regPrefTree *rad.Tree
-	foundPrefs  map[string]IpMask //here the key is the one of the registered parent prefix to cross ref.
+	missPrefs   map[string]IpMask
+}
+
+type foundPrefs struct {
+	prefs         map[string]interface{}
+	foundPrefTree *rad.Tree
+	fname         string
 }
 
 func newObserveCtx() *observectx {
 	return &observectx{
 		regPrefs:    make(map[string]interface{}),
 		regPrefTree: nil,
-		foundPrefs:  make(map[string]IpMask),
+		missPrefs:   make(map[string]IpMask),
 	}
 }
 
@@ -68,7 +80,7 @@ func numips(a uint8) int {
 	}
 }
 
-func (o *observectx) parseBgpdumpLine(line string) error {
+func (o *observectx) parseBgpdumpLine(line string, found foundPrefs) error {
 	seekstr := "PREFIX: "
 	if len(line) > 0 && strings.Contains(line, seekstr) {
 		pstr := line[len(seekstr):]
@@ -77,36 +89,140 @@ func (o *observectx) parseBgpdumpLine(line string) error {
 			return err
 		}
 		key := util.IpToRadixkey(ipm.ip, ipm.mask)
-		pkey, _, haveparent := o.regPrefTree.LongestPrefix(key)
+		_, _, haveparent := o.regPrefTree.LongestPrefix(key)
 		if haveparent {
-			o.foundPrefs[pkey] = ipm
+			_, _, havefoundparent := found.foundPrefTree.LongestPrefix(key)
+			if !havefoundparent { // we haven't seen it and we are looking for it
+				found.foundPrefTree.Insert(key, ipm)
+			}
 		}
 	}
 	return nil
 }
 
-func (o *observectx) summarize() {
+func summarize(fp foundPrefs, o *observectx) {
 	totips, seenips := 0, 0
+	newmissing := make([]IpMask, 0)
+	//fp.foundPrefTree = rad.NewFromMap(fp.prefs)
+	dp := 0
+	fp.foundPrefTree.Walk(func(s string, v interface{}) bool {
+		fp.foundPrefTree.WalkPrefix(s, func(schild string, vchild interface{}) bool { //delete the children
+			fp.foundPrefTree.WalkPrefix(schild, func(schild1 string, vchild1 interface{}) bool {
+				if schild1 != schild {
+					fmt.Printf("%s has parent %s. deleting under it:", vchild1.(IpMask), vchild.(IpMask))
+					delp := fp.foundPrefTree.DeletePrefix(schild1)
+					fmt.Printf("%d prefs\n", delp)
+					dp += delp
+					return true
+				}
+				return false
+			})
+			return true
+		})
+		return false
+	})
+	/*
+			pk, paren, hasparent := fp.foundPrefTree.LongestPrefix(s)
+			fmt.Printf("examining:%s and found that hasparent:%v %s\ns", v.(IpMask), hasparent, paren.(IpMask))
+			if hasparent && pk != s {
+				fmt.Printf("%s has parent %s. deleting\n", v.(IpMask), paren.(IpMask))
+				dp += fp.foundPrefTree.DeletePrefix(s)
+			}
+			return false
+		})
+	*/
+	fmt.Printf("totally deleted %d from discovered prefixes\n", dp)
+
 	for _, v := range o.regPrefs {
 		p := v.(IpMask)
-		totips += numips(p.mask)
+		nummask := numips(p.mask)
+		totips += nummask
 	}
-	fmt.Printf("prefix\t\tparentprefix\t\tnips\tparentnips\tcov\n")
-	for k, v := range o.foundPrefs {
-		parent := o.regPrefs[k].(IpMask)
-		nipparent := numips(parent.mask)
-		nipchild := numips(v.mask)
+	pdiscovered := 0
+	fp.foundPrefTree.Walk(func(s string, v interface{}) bool {
+		seenips += numips(v.(IpMask).mask)
+		pdiscovered++
+		return false
+	})
+	/*for _, v := range fp.prefs {
+		nipchild := numips(v.(IpMask).mask)
 		seenips += nipchild
-		percentage := float64(nipchild) / float64(nipparent)
-		fmt.Printf("%s\t%s\t\t%d\t%d\t\t%.2f\n", v, parent, nipchild, nipparent, percentage)
+	}*/
+
+	/*
+		for k, v := range o.regPrefs {
+			if _, ok := fp.prefs[k]; !ok {
+				if _, ok := o.missPrefs[k]; !ok { // add prefix to missing set
+					ipm := v.(IpMask)
+					o.missPrefs[k] = ipm
+					newmissing = append(newmissing, ipm)
+				}
+				untrackedprefs++
+				fmt.Printf("missing:%s key:%s\n", v, k)
+			} else {
+				delete(o.missPrefs, k) //prefix is no longer missing
+			}
+		}*/
+	fmt.Printf("file:%s prefixes tracked:%d prefs discovered:%d perc of ips covered:%.5f seenips:%d totips:%d \n", fp.fname, len(o.regPrefs), pdiscovered, float64(seenips)/float64(totips)*float64(100), seenips, totips)
+	if len(newmissing) != 0 {
+		if len(newmissing) != len(o.regPrefs) { //this guy saw nothing. don't print it.
+			fmt.Printf("new missing prefixes: ")
+			for _, v := range newmissing { //something was added to the missing set so print it.
+				fmt.Printf(" %v ", v)
+			}
+			fmt.Printf("\n")
+		}
 	}
-	fmt.Printf("prefixes tracked:%d prefs discovered:%d perc of ips covered:%.5f\n", len(o.regPrefs), len(o.foundPrefs), float64(seenips)/float64(totips))
+}
+
+func launchWorker(id int, f <-chan string, bin string, res chan<- foundPrefs, octx *observectx, wg *sync.WaitGroup) {
+	if _, err := os.Stat(bin); err != nil {
+		fmt.Printf("binary for bgpdump can't be STATed. quitting")
+		return
+	}
+	for fname := range f {
+		cmd := exec.Command(bin, fname)
+		cmdout, err := cmd.StdoutPipe()
+		if err != nil {
+			fmt.Printf("err:%s\n", err)
+			return
+		}
+		scanner := bufio.NewScanner(cmdout)
+		if err := cmd.Start(); err != nil {
+			fmt.Printf("running cmd err:%s\n", err)
+			return
+		}
+
+		fp := foundPrefs{
+			fname:         fname,
+			foundPrefTree: rad.New(),
+		}
+
+		for scanner.Scan() {
+			octx.parseBgpdumpLine(scanner.Text(), fp)
+		}
+		res <- fp
+	}
+	wg.Done()
+	fmt.Printf("worker exiting\n")
+}
+
+func collectResults(res <-chan foundPrefs, o *observectx, wg *sync.WaitGroup) {
+	for r := range res {
+		//fmt.Printf("collected result:%s\n", r)
+		summarize(r, o)
+	}
+	fmt.Printf("collector exiting\n")
+	wg.Done()
 }
 
 func main() {
 	var (
-		scanner *bufio.Scanner
+		scanner    *bufio.Scanner
+		inworkchan chan string
+		reschan    chan foundPrefs
 	)
+	inworkchan, reschan = make(chan string), make(chan foundPrefs)
 	flag.Parse()
 	if preffile == "" {
 		fmt.Printf("error: prefix file required\n")
@@ -134,13 +250,31 @@ func main() {
 	pfd.Close()
 	//create the prefixtree
 	octx.regPrefTree = rad.NewFromMap(octx.regPrefs)
+	dp := 0
+	octx.regPrefTree.Walk(func(s string, v interface{}) bool {
+		pk, paren, hasparent := octx.regPrefTree.LongestPrefix(s)
+		if hasparent && pk != s {
+			fmt.Printf("%s has parent %s\n", v.(IpMask), paren.(IpMask))
+			dp += octx.regPrefTree.DeletePrefix(s)
+		}
+		return false
+	})
+	fmt.Printf("already covered prefixes deleted:%d. Tree has %d now\n", dp, octx.regPrefTree.Len())
+	//fire up the workers
+	wg := &sync.WaitGroup{}
+	for i := 0; i < nworkers; i++ {
+		wg.Add(1)
+		go launchWorker(i, inworkchan, bgpdumpbin, reschan, octx, wg)
+	}
+	wg.Add(1)
+	go collectResults(reschan, octx, wg)
+
 	scanner = bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		err := octx.parseBgpdumpLine(scanner.Text())
-		if err != nil {
-			fmt.Printf("error:%s\n", err)
-		}
+		inworkchan <- scanner.Text()
 	}
-	octx.summarize()
+	close(inworkchan)
+	close(reschan)
+	wg.Wait()
 	return
 }
