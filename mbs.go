@@ -12,6 +12,7 @@ package gobgpdump
 import (
 	"fmt"
 	common "github.com/CSUNetSec/netsec-protobufs/common"
+	pbbgp "github.com/CSUNetSec/netsec-protobufs/protocol/bgp"
 	"github.com/CSUNetSec/protoparse"
 	mrt "github.com/CSUNetSec/protoparse/protocol/mrt"
 	util "github.com/CSUNetSec/protoparse/util"
@@ -19,28 +20,53 @@ import (
 	"time"
 )
 
-func parseHeaders(data []byte) (*mrt.MrtBufferStack, error) {
+func parseHeaders(data []byte, ind bool) (*mrt.MrtBufferStack, error) {
 	mrth := mrt.NewMrtHdrBuf(data)
 	bgp4h, err := mrth.Parse()
 	if err != nil {
 		return nil, fmt.Errorf("Failed parsing MRT header: %s\n", err)
 	}
-	bgph, err := bgp4h.Parse()
+
+	if ind {
+		_, err = bgp4h.Parse()
+		if err != nil {
+			return nil, fmt.Errorf("Failed parsing RIB header: %s\n", err)
+		}
+
+		return &mrt.MrtBufferStack{MrthBuf: mrth, Ribbuf: bgp4h}, nil
+	} else {
+		bgph, err := bgp4h.Parse()
+		if err != nil {
+			return nil, fmt.Errorf("Failed parsing BG4MP header: %s\n", err)
+		}
+
+		bgpup, err := bgph.Parse()
+		if err != nil {
+			return nil, fmt.Errorf("Failed parsing BGP header: %s\n", err)
+		}
+
+		_, err = bgpup.Parse()
+		if err != nil {
+			return nil, fmt.Errorf("Failed parsing BGP update: %s\n", err)
+		}
+
+		return &mrt.MrtBufferStack{MrthBuf: mrth, Bgp4mpbuf: bgp4h, Bgphbuf: bgph, Bgpupbuf: bgpup}, nil
+	}
+}
+
+func parseRibHeaders(data []byte, ind protoparse.PbVal) (*mrt.MrtBufferStack, error) {
+	mrth := mrt.NewRIBMrtHdrBuf(data, ind)
+	ribH, err := mrth.Parse()
 	if err != nil {
-		return nil, fmt.Errorf("Failed parsing BG4MP header: %s\n", err)
+		return nil, fmt.Errorf("Failed parsing MRT header: %s\n", err)
 	}
 
-	bgpup, err := bgph.Parse()
+	_, err = ribH.Parse()
 	if err != nil {
-		return nil, fmt.Errorf("Failed parsing BGP header: %s\n", err)
+		return nil, fmt.Errorf("Failed parsing RIB header: %s\n", err)
 	}
 
-	_, err = bgpup.Parse()
-	if err != nil {
-		return nil, fmt.Errorf("Failed parsing BGP update: %s\n", err)
-	}
-
-	return &mrt.MrtBufferStack{mrth, bgp4h, bgph, bgpup}, nil
+	return &mrt.MrtBufferStack{MrthBuf: mrth, Ribbuf: ribH}, nil
 }
 
 // This code just converts the 32 bit timestamp inside
@@ -55,20 +81,39 @@ func getTimestamp(mbs *mrt.MrtBufferStack) time.Time {
 // This does no length checking, so the returned path
 // could be empty, under very weird circumstances
 func getASPath(mbs *mrt.MrtBufferStack) ([]uint32, error) {
-	update := mbs.Bgpupbuf.(protoparse.BGPUpdater).GetUpdate()
-	if update == nil || update.Attrs == nil {
-		return nil, fmt.Errorf("Error parsing BGP update\n")
+	if mbs.IsRibStack() {
+		var totalaslist []uint32
+		rib := mbs.Ribbuf.(protoparse.RIBHeaderer).GetHeader()
+		if rib == nil {
+			return nil, fmt.Errorf("Error parsing AS path in rib header")
+		}
+		for _, ent := range rib.RouteEntry {
+			if ent.Attrs != nil {
+				entryAs := getASPathFromAttrs(ent.Attrs)
+				totalaslist = append(totalaslist, entryAs...)
+			}
+		}
+		return totalaslist, nil
+	} else {
+		update := mbs.Bgpupbuf.(protoparse.BGPUpdater).GetUpdate()
+		if update == nil || update.Attrs == nil {
+			return nil, fmt.Errorf("Error parsing AS path in BGP update")
+		}
+		return getASPathFromAttrs(update.Attrs), nil
 	}
 
+}
+
+func getASPathFromAttrs(attrs *pbbgp.BGPUpdate_Attributes) []uint32 {
 	var aslist []uint32
-	for _, segment := range update.Attrs.AsPath {
+	for _, segment := range attrs.AsPath {
 		if segment.AsSeq != nil && len(segment.AsSeq) > 0 {
 			aslist = append(aslist, segment.AsSeq...)
 		} else if segment.AsSet != nil && len(segment.AsSet) > 0 {
 			aslist = append(aslist, segment.AsSet...)
 		}
 	}
-	return aslist, nil
+	return aslist
 }
 
 // This will get the collector IP that received the message from the
@@ -92,25 +137,46 @@ func (r Route) String() string {
 // Like getASPath, this does no length checking, and may return
 // an empty array
 func getAdvertizedPrefixes(mbs *mrt.MrtBufferStack) ([]Route, error) {
-	update := mbs.Bgpupbuf.(protoparse.BGPUpdater).GetUpdate()
+	if mbs.IsRibStack() {
+		rib := mbs.Ribbuf.(protoparse.RIBHeaderer).GetHeader()
+		if rib == nil {
+			return nil, fmt.Errorf("Error parsing withdrawn routes")
+		}
 
-	if update == nil || update.AdvertizedRoutes == nil {
-		return nil, fmt.Errorf("Error parsing advertized routes\n")
+		pref := rib.GetRouteEntry()[0].GetPrefix()
+		r := Route{net.IP(util.GetIP(pref.GetPrefix())), uint8(pref.Mask)}
+		return []Route{r}, nil
+	} else {
+		update := mbs.Bgpupbuf.(protoparse.BGPUpdater).GetUpdate()
+
+		if update == nil || update.AdvertizedRoutes == nil {
+			return nil, fmt.Errorf("Error parsing advertized routes\n")
+		}
+
+		return getRoutes(update.AdvertizedRoutes.Prefixes), nil
 	}
-
-	return getRoutes(update.AdvertizedRoutes.Prefixes), nil
 }
 
 // This will return a list of prefixes that appear in withdrawn
 // routes
 func getWithdrawnPrefixes(mbs *mrt.MrtBufferStack) ([]Route, error) {
-	update := mbs.Bgpupbuf.(protoparse.BGPUpdater).GetUpdate()
+	if mbs.IsRibStack() {
+		rib := mbs.Ribbuf.(protoparse.RIBHeaderer).GetHeader()
+		if rib == nil {
+			return nil, fmt.Errorf("Error parsing withdrawn routes")
+		}
 
-	if update == nil || update.WithdrawnRoutes == nil {
-		return nil, fmt.Errorf("Error parsing withdrawn routes\n")
+		// Ribs don't have withdrawn prefixes
+		return nil, nil
+	} else {
+		update := mbs.Bgpupbuf.(protoparse.BGPUpdater).GetUpdate()
+
+		if update == nil || update.WithdrawnRoutes == nil {
+			return nil, fmt.Errorf("Error parsing withdrawn routes\n")
+		}
+
+		return getRoutes(update.WithdrawnRoutes.Prefixes), nil
 	}
-
-	return getRoutes(update.WithdrawnRoutes.Prefixes), nil
 }
 
 // This is just a convenience function for the getWithdrawn/Advertized routes, since

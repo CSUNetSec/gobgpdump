@@ -54,9 +54,13 @@ func NewTextFormatter() *TextFormatter {
 
 func (t *TextFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
 	ret := fmt.Sprintf("[%d] MRT Header: %s\n", t.msgNum, mbs.MrthBuf)
-	ret += fmt.Sprintf("BGP4MP Header: %s\n", mbs.Bgp4mpbuf)
-	ret += fmt.Sprintf("BGP Header: %s\n", mbs.Bgphbuf)
-	ret += fmt.Sprintf("BGP Update: %s\n\n", mbs.Bgpupbuf)
+	if mbs.IsRibStack() {
+		ret += fmt.Sprintf("RIB Header: %s\n", mbs.Ribbuf)
+	} else {
+		ret += fmt.Sprintf("BGP4MP Header: %s\n", mbs.Bgp4mpbuf)
+		ret += fmt.Sprintf("BGP Header: %s\n", mbs.Bgphbuf)
+		ret += fmt.Sprintf("BGP Update: %s\n\n", mbs.Bgpupbuf)
+	}
 	t.msgNum++
 	return ret, nil
 }
