@@ -1,3 +1,3 @@
 {base} /home/will/gobgpdumpdata
 {default} /{x}/{yyyy.mm}/
-other /c1/{yyyy.mm}/
+other /collector2/{yyyy.mm}/

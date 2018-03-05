@@ -147,3 +147,25 @@
 	count, and is the maximum number of threads to be launched by gobgpdump, with a cap of 16.
 	Example:
 	gobgpdump -wc 2 <input file 1> <input file 2>
+5) Complex examples
+	This repository includes small example MRT files, uncompressed, in the /examples folder.
+	These can  be used to show the complex functionality of gobgpdump.
+
+	If I wanted to read in an MRT file, find messages originating from autonomous system 6629 or 
+	4847, and print all the prefixes advertized or withdrawn from that system and store it in a 
+	file called temp, I could run this:
+	gobgpdump -src 4847,6629 -fmtr pup -o temp /examples/collector1/2017.01/arch0
+
+	If I wanted to output every message that contained the prefix 153.2.224.0/24 as json, I could
+	run:
+	gobgpdump -prefixes 196.216.241.0/24 -fmtr json /examples/collector1/2017.02/arch1
+
+	If I wanted to save every message originating from AS 4847 from multiple files as an MRT file
+	for later analyzation in a file called 4847-messages, and I wanted to read the files with a max 
+	of 4  cores, I could run:
+	gobgpdump -srcas 4847 -fmtr id -o 4847-messages -wc 4 examples/all/*
+
+	If I was dealing with too many files in different directories to use wildcards effectively,
+	I would use the configuration option.
+	gobgpdump -conf example/example-formats example/conf-file
+	For more information on how to build and modify those files, read README-config.md
