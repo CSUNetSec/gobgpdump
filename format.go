@@ -19,6 +19,7 @@ import (
 	util "github.com/CSUNetSec/protoparse/util"
 	radix "github.com/armon/go-radix"
 	"io"
+	"strings"
 	"sync"
 	"time"
 )
@@ -78,6 +79,91 @@ func (j JSONFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error
 
 // The JSON formatter doesn't need to summarize
 func (j JSONFormatter) summarize() {}
+
+func NewMlFormatter() mlFormatter {
+	return mlFormatter{}
+}
+
+type mltext struct {
+	Mrt_header struct {
+		Timestamp string
+	}
+	Bgp4mp_header struct {
+		Local_as int
+		Peer_as  int
+		Local_ip string
+		Peer_ip  string
+	}
+	Bgp_update struct {
+		Advertized_routes []struct {
+			Prefix string
+			Mask   int
+		}
+		Attrs struct {
+			As_path []struct {
+				As_seq []int
+				As_set []int
+			}
+			Next_hop string
+		}
+		Withdrawn_routes []struct {
+			Prefix string
+			Mask   int
+		}
+	}
+}
+
+type mlFormatter struct{}
+
+func (m mlFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
+	mbsj, err := json.Marshal(mbs)
+	if err != nil {
+		return "", err
+	}
+	mtext := &mltext{}
+	err = json.Unmarshal(mbsj, mtext)
+	if err != nil {
+		return "", err
+	}
+	tparts := strings.Split(mtext.Mrt_header.Timestamp, "T")
+	if len(tparts) != 2 {
+		return "", err
+	}
+	t1parts := strings.Split(tparts[1], "Z")
+	retstr := ""
+	for _, ar := range mtext.Bgp_update.Advertized_routes {
+		aspstr := ""
+		for _, asp := range mtext.Bgp_update.Attrs.As_path {
+			for _, setelem := range asp.As_set {
+				if aspstr == "" {
+					aspstr += fmt.Sprintf("%d", setelem)
+				} else {
+					aspstr += fmt.Sprintf("-%d", setelem)
+				}
+			}
+			for _, seqelem := range asp.As_seq {
+				if aspstr == "" {
+					aspstr += fmt.Sprintf("%d", seqelem)
+				} else {
+					aspstr += fmt.Sprintf("-%d", seqelem)
+				}
+			}
+		}
+		retstr += fmt.Sprintf("%s,%s,%d,%d,%s,%s,%s,%s,%d,%s,%s\n", tparts[0], t1parts[0], mtext.Bgp4mp_header.Local_as,
+			mtext.Bgp4mp_header.Peer_as, mtext.Bgp4mp_header.Local_ip, mtext.Bgp4mp_header.Peer_ip,
+			"advertized", ar.Prefix, ar.Mask, aspstr,
+			mtext.Bgp_update.Attrs.Next_hop)
+	}
+	for _, wr := range mtext.Bgp_update.Withdrawn_routes {
+		retstr += fmt.Sprintf("%s,%s,%d,%d,%s,%s,%s,%s,%d,%s,%s\n", tparts[0], t1parts[0], mtext.Bgp4mp_header.Local_as,
+			mtext.Bgp4mp_header.Peer_as, mtext.Bgp4mp_header.Local_ip, mtext.Bgp4mp_header.Peer_ip,
+			"withdrawn", wr.Prefix, wr.Mask, "",
+			"")
+	}
+	return retstr, nil
+}
+
+func (m mlFormatter) summarize() {}
 
 // Applies no formatting to the data
 // But data is decompressed, may need to fix that

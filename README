@@ -115,6 +115,9 @@
 
 		When working with a large quantity of input files, redirecting log output is
 		recommended, as it can quickly clutter stdout.
+	2.8) ML text output
+		A textual formatter that prints one line per event, suitable for Machine Learning
+		purposes.
 3) Filter options
 	3.1) Prefix filtering
 		Possibly the most useful type of filtering, gobgpdump has the option of only

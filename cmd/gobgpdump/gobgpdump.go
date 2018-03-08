@@ -19,7 +19,7 @@ func init() {
 	flag.StringVar(&configFile.Do, "o", "stdout", "file to place dump output")
 	flag.StringVar(&configFile.Fmtr, "fmtr", "text", "format to output results in.\n"+
 		"Available Formats:\n"+
-		"pup, pts, day, json, text, id")
+		"pup, pts, day, json, text, ml, id")
 	flag.StringVar(&configFile.Srcas, "srcas", "", "list of comma separated AS's (e.g. 1,2,3,4) to filter message source by")
 	flag.StringVar(&configFile.Destas, "destas", "", "list of comma separated AS's (e.g. 1,2,3,4) to filter message destination by")
 	flag.StringVar(&configFile.PrefList, "prefixes", "", "list of commma separated prefixes. Messages containing any in the list will pass filters")
