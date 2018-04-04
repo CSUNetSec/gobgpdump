@@ -81,6 +81,10 @@ func getScanner(fd *os.File) (scanner *bufio.Scanner) {
 	return
 }
 
+func GetMRTScanner(fd *os.File) *bufio.Scanner {
+	return getScanner(fd)
+}
+
 func isBz2(fname string) bool {
 	fext := filepath.Ext(fname)
 	if fext == ".bz2" {

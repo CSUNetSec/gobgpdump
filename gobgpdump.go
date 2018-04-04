@@ -2,6 +2,8 @@ package gobgpdump
 
 import (
 	"fmt"
+	pp "github.com/CSUNetSec/protoparse"
+	mrt "github.com/CSUNetSec/protoparse/protocol/mrt"
 	"os"
 	"sync"
 	"time"
@@ -48,11 +50,34 @@ func dumpFile(name string, dc *DumpConfig) {
 	sz := 0
 	start := time.Now()
 
+	isRib := false
+	var index pp.PbVal
+	var mbs *mrt.MrtBufferStack
+
 	for scanner.Scan() {
 		entryCt++
 		data := scanner.Bytes()
 		sz += len(data)
-		mbs, err := parseHeaders(data)
+
+		r, err := mrt.IsRib(data)
+		if err != nil {
+			dc.log.WriteString(fmt.Sprintf("[%d] Error: %s\n", entryCt, err))
+			break
+		}
+
+		if r {
+			if isRib {
+				mbs, err = parseRibHeaders(data, index)
+			} else {
+				mbs, err = parseHeaders(data, true)
+				index = mbs.Ribbuf
+				isRib = true
+				// The index message should not pass through any filtering or formatting
+				continue
+			}
+		} else {
+			mbs, err = parseHeaders(data, false)
+		}
 
 		if err != nil {
 			dc.log.WriteString(fmt.Sprintf("[%d] Error: %s\n", entryCt, err))
