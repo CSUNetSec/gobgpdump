@@ -21,10 +21,12 @@ The config file is small file with a single JSON object, in the form:
 "Wc":1,
 "Fmtr":"text",
 "Srcas":"",
-"Destas":""}
+"Destas":"",
+"PrefList":""
+}
 
 All fields are required, except the filter fields. In this case, only
-the last two, Srcas and Destas are not required.
+the last three: Srcas, Destas and PrefList are not required.
 
 The first three (Collist, Start, End) relate to the collector format
 file, and will be discussed in that section.
@@ -42,6 +44,12 @@ process files, with each goroutine processing a single file at a time.
 
 Fmtr is the output format chose. Several are available, visible with
 gobgpdump -h
+
+Srcas , Dstas and PrefList are comma separated lists to match on each
+element of the corresponding fields.
+Prefix matching works in a "contained" function. 
+So for example a prefix list of "132.9.0.0/16" will match the contained
+subnet of 132.9.12.0/24
 
 ##collector format file
 Collector Format is a special file to help gobgpdump navigate your
