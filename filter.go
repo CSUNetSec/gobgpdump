@@ -67,15 +67,6 @@ func (pf PrefixFilter) filterBySeen(mbs *mrt.MrtBufferStack) bool {
 	return false
 }
 
-func (pf PrefixFilter) matchesOne(pref string) bool {
-	for _, comp := range pf.prefixes {
-		if pref == comp {
-			return true
-		}
-	}
-	return false
-}
-
 type ASFilter struct {
 	asList []uint32
 }
