@@ -2,6 +2,7 @@ package gobgpdump
 
 import (
 	"bufio"
+	"bytes"
 	"compress/bzip2"
 	"fmt"
 	"github.com/CSUNetSec/protoparse/protocol/mrt"
@@ -9,6 +10,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 )
 
@@ -98,3 +100,23 @@ type DiscardCloser struct{}
 func (d DiscardCloser) Write(data []byte) (n int, err error) { return ioutil.Discard.Write(data) }
 
 func (d DiscardCloser) Close() error { return nil }
+
+//help functions for storing IPs in the radix tree
+func IpToRadixkey(b []byte, mask uint8) string {
+	var buffer bytes.Buffer
+	for i := 0; i < len(b) && i < int(mask); i++ {
+		buffer.WriteString(fmt.Sprintf("%08b", b[i]))
+	}
+	if int(mask) > len(buffer.String()) {
+		return buffer.String()
+	}
+	return buffer.String()[:mask]
+}
+
+func maskstr2uint8(m string) (uint8, error) {
+	mask, err := strconv.ParseUint(m, 10, 32)
+	if err != nil {
+		return 0, err
+	}
+	return uint8(mask), nil
+}

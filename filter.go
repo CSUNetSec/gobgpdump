@@ -12,7 +12,10 @@
 package gobgpdump
 
 import (
+	"fmt"
 	mrt "github.com/CSUNetSec/protoparse/protocol/mrt"
+	radix "github.com/armon/go-radix"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -21,20 +24,33 @@ type Filter func(mbs *mrt.MrtBufferStack) bool
 
 type PrefixFilter struct {
 	prefixes []string
+	rt       *radix.Tree
 }
 
-// This does not check if a prefix in raw is properly formatted, thus
-// 1.1:3/1 is not valid, but is not caught, so no messages could pass
 func NewPrefixFilter(raw string) Filter {
-	pf := PrefixFilter{strings.Split(raw, ",")}
+	pf := PrefixFilter{}
+	pf.rt = radix.New()
+	prefstrings := strings.Split(raw, ",")
+	for _, p := range prefstrings {
+		parts := strings.Split(p, "/")
+		if len(parts) != 2 {
+			panic("malformed prefix string")
+		}
+		mask, err := maskstr2uint8(parts[1])
+		if err != nil {
+			panic(fmt.Sprintf("error parsing mask:%s err:%s", parts[1], err))
+		}
+		pf.rt.Insert(IpToRadixkey(net.ParseIP(parts[0]).To4(), mask), true)
+	}
+	pf.prefixes = prefstrings
 	return pf.filterBySeen
 }
 
 func (pf PrefixFilter) filterBySeen(mbs *mrt.MrtBufferStack) bool {
 	advPrefs, err := getAdvertizedPrefixes(mbs)
 	if err == nil {
-		for _, rt := range advPrefs {
-			if pf.matchesOne(rt.String()) {
+		for _, pref := range advPrefs {
+			if _, _, found := pf.rt.LongestPrefix(IpToRadixkey(pref.IP, pref.Mask)); found {
 				return true
 			}
 		}
@@ -42,8 +58,8 @@ func (pf PrefixFilter) filterBySeen(mbs *mrt.MrtBufferStack) bool {
 
 	wdnPrefs, err := getWithdrawnPrefixes(mbs)
 	if err == nil {
-		for _, rt := range wdnPrefs {
-			if pf.matchesOne(rt.String()) {
+		for _, pref := range wdnPrefs {
+			if _, _, found := pf.rt.LongestPrefix(IpToRadixkey(pref.IP, pref.Mask)); found {
 				return true
 			}
 		}
