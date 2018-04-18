@@ -22,7 +22,8 @@ The config file is small file with a single JSON object, in the form:
 "Fmtr":"text",
 "Srcas":"",
 "Destas":"",
-"PrefList":""
+"Prefixes":"",
+"Debug":boolean
 }
 
 All fields are required, except the filter fields. In this case, only
@@ -45,7 +46,7 @@ process files, with each goroutine processing a single file at a time.
 Fmtr is the output format chose. Several are available, visible with
 gobgpdump -h
 
-Srcas , Dstas and PrefList are comma separated lists to match on each
+Srcas , Dstas and Prefixes are comma separated lists to match on each
 element of the corresponding fields.
 Prefix matching works in a "contained" function. 
 So for example a prefix list of "132.9.0.0/16" will match the contained
