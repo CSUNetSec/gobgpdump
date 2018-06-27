@@ -3,6 +3,7 @@ package gobgpdump
 import (
 	"fmt"
 	pp "github.com/CSUNetSec/protoparse"
+	filter "github.com/CSUNetSec/protoparse/filter"
 	mrt "github.com/CSUNetSec/protoparse/protocol/mrt"
 	"os"
 	"sync"
@@ -67,16 +68,16 @@ func dumpFile(name string, dc *DumpConfig) {
 
 		if r {
 			if isRib {
-				mbs, err = parseRibHeaders(data, index)
+				mbs, err = mrt.ParseRibHeaders(data, index)
 			} else {
-				mbs, err = parseHeaders(data, true)
+				mbs, err = mrt.ParseHeaders(data, true)
 				index = mbs.Ribbuf
 				isRib = true
 				// The index message should not pass through any filtering or formatting
 				continue
 			}
 		} else {
-			mbs, err = parseHeaders(data, false)
+			mbs, err = mrt.ParseHeaders(data, false)
 		}
 
 		if err != nil {
@@ -84,7 +85,7 @@ func dumpFile(name string, dc *DumpConfig) {
 			break
 		}
 
-		if filterAll(dc.filters, mbs) {
+		if filter.FilterAll(dc.filters, mbs) {
 			passedCt++
 			output, err := dc.fmtr.format(mbs, NewMBSInfo(name, entryCt))
 			if err != nil {

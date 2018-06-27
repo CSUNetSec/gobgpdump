@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/CSUNetSec/protoparse/filter"
 	"io"
 	golog "log"
 	"os"
@@ -52,7 +53,7 @@ type DumpConfig struct {
 	workers int
 	source  stringsource
 	fmtr    Formatter
-	filters []Filter
+	filters []filter.Filter
 	dump    *MultiWriteFile
 	log     *MultiWriteFile
 	stat    *MultiWriteFile
@@ -142,10 +143,10 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 	return &dc, nil
 }
 
-func getFilters(configFile ConfigFile) ([]Filter, error) {
-	var filters []Filter
+func getFilters(configFile ConfigFile) ([]filter.Filter, error) {
+	var filters []filter.Filter
 	if configFile.Srcas != "" {
-		srcFilt, err := NewASFilter(configFile.Srcas, true)
+		srcFilt, err := filter.NewASFilter(configFile.Srcas, true)
 		if err != nil {
 			return nil, err
 		}
@@ -153,7 +154,7 @@ func getFilters(configFile ConfigFile) ([]Filter, error) {
 	}
 
 	if configFile.Destas != "" {
-		destFilt, err := NewASFilter(configFile.Destas, false)
+		destFilt, err := filter.NewASFilter(configFile.Destas, false)
 		if err != nil {
 			return nil, err
 		}
@@ -161,7 +162,7 @@ func getFilters(configFile ConfigFile) ([]Filter, error) {
 	}
 
 	if configFile.PrefList != "" {
-		prefFilt := NewPrefixFilter(configFile.PrefList)
+		prefFilt := filter.NewPrefixFilter(configFile.PrefList)
 		filters = append(filters, prefFilt)
 	}
 	return filters, nil

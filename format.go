@@ -236,9 +236,9 @@ func NewUniquePrefixList(fd io.Writer) *UniquePrefixList {
 
 func (upl *UniquePrefixList) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (string, error) {
 
-	timestamp := getTimestamp(mbs)
-	advRoutes, err := getAdvertizedPrefixes(mbs)
-	asp, errasp := getASPath(mbs)
+	timestamp := mrt.GetTimestamp(mbs)
+	advRoutes, err := mrt.GetAdvertizedPrefixes(mbs)
+	asp, errasp := mrt.GetASPath(mbs)
 	if errasp != nil || len(asp) == 0 {
 		//maybe just a withdrawn message? make it empty.
 		asp = []uint32{}
@@ -249,7 +249,7 @@ func (upl *UniquePrefixList) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (strin
 		upl.addRoutes(advRoutes, inf, timestamp, true, asp)
 	}
 
-	wdnRoutes, err := getWithdrawnPrefixes(mbs)
+	wdnRoutes, err := mrt.GetWithdrawnPrefixes(mbs)
 	if err == nil {
 		upl.addRoutes(wdnRoutes, inf, timestamp, false, asp)
 	}
@@ -259,7 +259,7 @@ func (upl *UniquePrefixList) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (strin
 // If this finds a Route that is not present in the prefixes map,
 // adds it in. If it finds one, but these Routes have an earlier
 // timestamp, it replaces the old one.
-func (upl *UniquePrefixList) addRoutes(rts []Route, info MBSInfo, timestamp time.Time, advert bool, asp []uint32) {
+func (upl *UniquePrefixList) addRoutes(rts []mrt.Route, info MBSInfo, timestamp time.Time, advert bool, asp []uint32) {
 	for _, route := range rts {
 		// Ignore this prefix, because it causes a lot of problems
 		if route.Mask == 1 {
@@ -310,10 +310,10 @@ func NewUniquePrefixSeries(fd io.Writer) *UniquePrefixSeries {
 }
 
 func (ups *UniquePrefixSeries) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (string, error) {
-	timestamp := getTimestamp(mbs)
+	timestamp := mrt.GetTimestamp(mbs)
 
-	advRoutes, err := getAdvertizedPrefixes(mbs)
-	asp, errasp := getASPath(mbs)
+	advRoutes, err := mrt.GetAdvertizedPrefixes(mbs)
+	asp, errasp := mrt.GetASPath(mbs)
 	if errasp != nil || len(asp) == 0 {
 		//maybe just a withdrawn message? make it empty.
 		asp = []uint32{}
@@ -322,14 +322,14 @@ func (ups *UniquePrefixSeries) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (str
 		ups.addRoutes(advRoutes, inf, timestamp, true, asp)
 	}
 
-	wdnRoutes, err := getWithdrawnPrefixes(mbs)
+	wdnRoutes, err := mrt.GetWithdrawnPrefixes(mbs)
 	if err == nil {
 		ups.addRoutes(wdnRoutes, inf, timestamp, false, asp)
 	}
 	return "", nil
 }
 
-func (ups *UniquePrefixSeries) addRoutes(rts []Route, info MBSInfo, timestamp time.Time, advert bool, asp []uint32) {
+func (ups *UniquePrefixSeries) addRoutes(rts []mrt.Route, info MBSInfo, timestamp time.Time, advert bool, asp []uint32) {
 	for _, route := range rts {
 		//This route causes a lot of trouble
 		if route.Mask == 1 {
@@ -404,7 +404,7 @@ func NewDayFormatter(fd io.Writer) *DayFormatter {
 }
 
 func (d *DayFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
-	timestamp := getTimestamp(mbs)
+	timestamp := mrt.GetTimestamp(mbs)
 	d.hourCt[timestamp.Hour()]++
 	return "", nil
 }
