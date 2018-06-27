@@ -42,7 +42,7 @@ type ConfigFile struct {
 	Conf     bool     //get config from a file
 	Srcas    string   `json:"Srcas,omitempty"`
 	Destas   string   `json:"Destas,omitempty"`
-	PrefList string   `json:"prefixes,omitempty"`
+	PrefList string   `json:"Prefixes,omitempty"`
 	Debug    bool     // sets the global debug flag for the package
 }
 

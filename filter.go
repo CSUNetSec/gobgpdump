@@ -14,7 +14,7 @@ package gobgpdump
 import (
 	"fmt"
 	mrt "github.com/CSUNetSec/protoparse/protocol/mrt"
-	radix "github.com/armon/go-radix"
+	pu "github.com/CSUNetSec/protoparse/util"
 	"net"
 	"strconv"
 	"strings"
@@ -24,23 +24,27 @@ type Filter func(mbs *mrt.MrtBufferStack) bool
 
 type PrefixFilter struct {
 	prefixes []string
-	rt       *radix.Tree
+	pt       pu.PrefixTree
 }
 
 func NewPrefixFilter(raw string) Filter {
 	pf := PrefixFilter{}
-	pf.rt = radix.New()
+	pf.pt = pu.NewPrefixTree()
 	prefstrings := strings.Split(raw, ",")
 	for _, p := range prefstrings {
 		parts := strings.Split(p, "/")
 		if len(parts) != 2 {
 			panic("malformed prefix string")
 		}
-		mask, err := maskstr2uint8(parts[1])
+		mask, err := pu.MaskStrToUint8(parts[1])
 		if err != nil {
 			panic(fmt.Sprintf("error parsing mask:%s err:%s", parts[1], err))
 		}
-		pf.rt.Insert(IpToRadixkey(net.ParseIP(parts[0]).To4(), mask), true)
+		parsedip := net.ParseIP(parts[0])
+		if parsedip == nil {
+			panic(fmt.Sprintf("malformed IP address:%s", parts[0]))
+		}
+		pf.pt.Add(parsedip, mask)
 	}
 	pf.prefixes = prefstrings
 	return pf.filterBySeen
@@ -50,7 +54,7 @@ func (pf PrefixFilter) filterBySeen(mbs *mrt.MrtBufferStack) bool {
 	advPrefs, err := getAdvertizedPrefixes(mbs)
 	if err == nil {
 		for _, pref := range advPrefs {
-			if _, _, found := pf.rt.LongestPrefix(IpToRadixkey(pref.IP, pref.Mask)); found {
+			if pf.pt.ContainsIpMask(pref.IP, pref.Mask) {
 				return true
 			}
 		}
@@ -59,7 +63,7 @@ func (pf PrefixFilter) filterBySeen(mbs *mrt.MrtBufferStack) bool {
 	wdnPrefs, err := getWithdrawnPrefixes(mbs)
 	if err == nil {
 		for _, pref := range wdnPrefs {
-			if _, _, found := pf.rt.LongestPrefix(IpToRadixkey(pref.IP, pref.Mask)); found {
+			if pf.pt.ContainsIpMask(pref.IP, pref.Mask) {
 				return true
 			}
 		}
