@@ -162,7 +162,7 @@ func getFilters(configFile ConfigFile) ([]filter.Filter, error) {
 	}
 
 	if configFile.PrefList != "" {
-		prefFilt := filter.NewPrefixFilter(configFile.PrefList)
+		prefFilt := filter.NewPrefixFilterFromString(configFile.PrefList, ",")
 		filters = append(filters, prefFilt)
 	}
 	return filters, nil
