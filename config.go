@@ -146,7 +146,7 @@ func GetDumpConfig(configFile ConfigFile) (*DumpConfig, error) {
 func getFilters(configFile ConfigFile) ([]filter.Filter, error) {
 	var filters []filter.Filter
 	if configFile.Srcas != "" {
-		srcFilt, err := filter.NewASFilter(configFile.Srcas, true)
+		srcFilt, err := filter.NewASFilter(configFile.Srcas, filter.AS_SOURCE)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +154,7 @@ func getFilters(configFile ConfigFile) ([]filter.Filter, error) {
 	}
 
 	if configFile.Destas != "" {
-		destFilt, err := filter.NewASFilter(configFile.Destas, false)
+		destFilt, err := filter.NewASFilter(configFile.Destas, filter.AS_DESTINATION)
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +162,10 @@ func getFilters(configFile ConfigFile) ([]filter.Filter, error) {
 	}
 
 	if configFile.PrefList != "" {
-		prefFilt := filter.NewPrefixFilterFromString(configFile.PrefList, ",")
+		prefFilt, err := filter.NewPrefixFilterFromString(configFile.PrefList, ",")
+		if err != nil {
+			return nil, err
+		}
 		filters = append(filters, prefFilt)
 	}
 	return filters, nil
