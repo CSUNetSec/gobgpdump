@@ -43,6 +43,7 @@ type ConfigFile struct {
 	Conf     bool     //get config from a file
 	Srcas    string   `json:"Srcas,omitempty"`
 	Destas   string   `json:"Destas,omitempty"`
+	Anyas    string   `json:"Anyas,omitempty"`
 	PrefList string   `json:"Prefixes,omitempty"`
 	Debug    bool     // sets the global debug flag for the package
 }
@@ -161,6 +162,13 @@ func getFilters(configFile ConfigFile) ([]filter.Filter, error) {
 		filters = append(filters, destFilt)
 	}
 
+	if configFile.Anyas != "" {
+		anyFilt, err := filter.NewASFilter(configFile.Anyas, filter.AS_ANYWHERE)
+		if err != nil {
+			return nil, err
+		}
+		filters = append(filters, anyFilt)
+	}
 	if configFile.PrefList != "" {
 		prefFilt, err := filter.NewPrefixFilterFromString(configFile.PrefList, ",")
 		if err != nil {

@@ -22,6 +22,7 @@ The config file is small file with a single JSON object, in the form:
 "Fmtr":"text",
 "Srcas":"",
 "Destas":"",
+"Anyas":"",
 "Prefixes":"",
 "Debug":boolean
 }
@@ -46,8 +47,8 @@ process files, with each goroutine processing a single file at a time.
 Fmtr is the output format chose. Several are available, visible with
 gobgpdump -h
 
-Srcas , Dstas and Prefixes are comma separated lists to match on each
-element of the corresponding fields.
+Srcas , Dstas, Anyas and Prefixes are comma separated lists to match on each
+element of the corresponding fields. Anyas means an AS anywhere in the AS-path
 Prefix matching works in a "contained" function. 
 So for example a prefix list of "132.9.0.0/16" will match the contained
 subnet of 132.9.12.0/24
