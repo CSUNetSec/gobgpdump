@@ -414,3 +414,113 @@ func (d *DayFormatter) summarize() {
 		d.output.Write([]byte(fmt.Sprintf("%d %d\n", i, d.hourCt[i])))
 	}
 }
+
+type ASNode struct {
+	as   uint32
+	ct   int
+	next []uint32
+}
+
+func (asn *ASNode) HasNext(as uint32) bool {
+	for _, next := range asn.next {
+		if next == as {
+			return true
+		}
+	}
+	return false
+}
+
+func (asn *ASNode) AddNext(as uint32) {
+	if asn.HasNext(as) {
+		return
+	}
+
+	asn.next = append(asn.next, as)
+}
+
+type ASMap struct {
+	nodes map[uint32]*ASNode
+}
+
+func NewASMap() *ASMap {
+	return &ASMap{nodes: make(map[uint32]*ASNode)}
+}
+
+func (asm *ASMap) AddPath(aspath []uint32) {
+	// Add all the links starting from the origin
+	for i := len(aspath) - 1; i >= 0; i-- {
+		node, ok := asm.nodes[aspath[i]]
+		if !ok {
+			node = &ASNode{as: aspath[i], ct: 0, next: []uint32{}}
+		}
+
+		node.ct++
+		if i != 0 {
+			node.AddNext(aspath[i-1])
+		}
+		asm.nodes[aspath[i]] = node
+	}
+}
+
+func (asm *ASMap) ToDotFile(w io.Writer) error {
+	graphTmpl := "digraph ASMap {\n %s \n\n %s \n}"
+	nodeTmpl := "%d; // Appeared: %d\n"
+	nodes := ""
+	edges := ""
+	for k, v := range asm.nodes {
+		nodes += fmt.Sprintf(nodeTmpl, k, v.ct)
+
+		asList := "{"
+		for _, as := range v.next {
+			asList = fmt.Sprintf("%s %d", asList, as)
+		}
+		asList += "}"
+		edges += fmt.Sprintf("%d -> %s;\n", k, asList)
+	}
+	graph := fmt.Sprintf(graphTmpl, nodes, edges)
+	_, err := w.Write([]byte(graph))
+	return err
+}
+
+type ASMapFormatter struct {
+	output io.Writer
+	asMap  *ASMap
+	pathC  chan []uint32
+	wg     *sync.WaitGroup
+}
+
+func NewASMapFormatter(fd io.Writer) *ASMapFormatter {
+	asmf := &ASMapFormatter{output: fd}
+	asmf.asMap = NewASMap()
+	asmf.pathC = make(chan []uint32, 32)
+	asmf.wg = &sync.WaitGroup{}
+
+	asmf.wg.Add(1)
+	go asmf.processPaths()
+	return asmf
+}
+
+func (asmf *ASMapFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
+	asp, err := mrt.GetASPath(mbs)
+	if err != nil || len(asp) == 0 {
+		return "", nil
+	}
+
+	asmf.pathC <- asp
+	return "", nil
+}
+
+func (asmf *ASMapFormatter) processPaths() {
+	defer asmf.wg.Done()
+
+	for path := range asmf.pathC {
+		asmf.asMap.AddPath(path)
+	}
+}
+
+func (asmf *ASMapFormatter) summarize() {
+	close(asmf.pathC)
+	asmf.wg.Wait()
+
+	asmf.asMap.ToDotFile(asmf.output)
+}

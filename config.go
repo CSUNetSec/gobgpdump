@@ -1,11 +1,9 @@
-// This file is all the code necessary to set up a message dump
+// Package gobgpdump is all the code necessary to set up a message dump
 // It parses command line options, reads configuration from files,
 // and returns all the parameters to the main logic of the program.
-
 // Has passed fairly rigorous testing.
 // Passes normal options, config files with multiple
 // collectors over multiple months
-
 //TODO: Add into the configuration option a list of allowed file
 // extnsions, default being all, -conf option only
 package gobgpdump
@@ -196,6 +194,8 @@ func getFormatter(configFile ConfigFile, dumpOut io.Writer) (fmtr Formatter) {
 		fmtr = NewMlFormatter()
 	case "id":
 		fmtr = NewIdentityFormatter()
+	case "asmap":
+		fmtr = NewASMapFormatter(dumpOut)
 	default:
 		fmtr = NewTextFormatter()
 	}
