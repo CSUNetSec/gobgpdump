@@ -416,9 +416,10 @@ func (d *DayFormatter) summarize() {
 }
 
 type ASNode struct {
-	as   uint32
-	ct   int
-	next []uint32
+	as       uint32
+	ct       int
+	next     []uint32
+	isOrigin bool
 }
 
 func (asn *ASNode) HasNext(as uint32) bool {
@@ -451,10 +452,13 @@ func (asm *ASMap) AddPath(aspath []uint32) {
 	for i := len(aspath) - 1; i >= 0; i-- {
 		node, ok := asm.nodes[aspath[i]]
 		if !ok {
-			node = &ASNode{as: aspath[i], ct: 0, next: []uint32{}}
+			node = &ASNode{as: aspath[i], ct: 0, next: []uint32{}, isOrigin: false}
 		}
 
 		node.ct++
+		if i == len(aspath)-1 {
+			node.isOrigin = true
+		}
 		if i != 0 {
 			node.AddNext(aspath[i-1])
 		}
@@ -464,11 +468,15 @@ func (asm *ASMap) AddPath(aspath []uint32) {
 
 func (asm *ASMap) ToDotFile(w io.Writer) error {
 	graphTmpl := "digraph ASMap {\n %s \n\n %s \n}"
-	nodeTmpl := "%d; // Appeared: %d\n"
+	nodeTmpl := "%d %s; // Appeared: %d\n"
 	nodes := ""
 	edges := ""
 	for k, v := range asm.nodes {
-		nodes += fmt.Sprintf(nodeTmpl, k, v.ct)
+		if v.isOrigin {
+			nodes += fmt.Sprintf(nodeTmpl, k, "[color=blue]", v.ct)
+		} else {
+			nodes += fmt.Sprintf(nodeTmpl, k, "", v.ct)
+		}
 
 		asList := "{"
 		for _, as := range v.next {
