@@ -439,6 +439,24 @@ func (asn *ASNode) AddNext(as uint32) {
 	asn.next = append(asn.next, as)
 }
 
+func (asn *ASNode) GetDotAttributres() string {
+	attrTmpl := "[style=\"filled\",fillcolor=\"%s\"]"
+	color := ""
+	// These colors were chosen to be lightly colored but still
+	// noticeable
+	if asn.isOrigin && asn.ct == 1 {
+		color = "darkorchid1"
+	} else if asn.isOrigin {
+		color = "cornflowerblue"
+	} else if asn.ct == 1 {
+		color = "firebrick1"
+	} else {
+		return ""
+	}
+
+	return fmt.Sprintf(attrTmpl, color)
+}
+
 type ASMap struct {
 	nodes map[uint32]*ASNode
 }
@@ -472,11 +490,7 @@ func (asm *ASMap) ToDotFile(w io.Writer) error {
 	nodes := ""
 	edges := ""
 	for k, v := range asm.nodes {
-		if v.isOrigin {
-			nodes += fmt.Sprintf(nodeTmpl, k, "[color=blue]", v.ct)
-		} else {
-			nodes += fmt.Sprintf(nodeTmpl, k, "", v.ct)
-		}
+		nodes += fmt.Sprintf(nodeTmpl, k, v.GetDotAttributres(), v.ct)
 
 		asList := "{"
 		for _, as := range v.next {

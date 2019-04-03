@@ -43,6 +43,7 @@ type ConfigFile struct {
 	Destas   string   `json:"Destas,omitempty"`
 	Anyas    string   `json:"Anyas,omitempty"`
 	PrefList string   `json:"Prefixes,omitempty"`
+	PrefLoc  string   `json:PrefLoc,omitempty`
 	Debug    bool     // sets the global debug flag for the package
 }
 
@@ -167,8 +168,19 @@ func getFilters(configFile ConfigFile) ([]filter.Filter, error) {
 		}
 		filters = append(filters, anyFilt)
 	}
+
+	loc := 0
+	switch configFile.PrefLoc {
+	case "advertized":
+		loc = filter.AdvPrefix
+	case "withdrawn":
+		loc = filter.WdrPrefix
+	default:
+		loc = filter.AnyPrefix
+	}
+
 	if configFile.PrefList != "" {
-		prefFilt, err := filter.NewPrefixFilterFromString(configFile.PrefList, ",")
+		prefFilt, err := filter.NewPrefixFilterFromString(configFile.PrefList, ",", loc)
 		if err != nil {
 			return nil, err
 		}
