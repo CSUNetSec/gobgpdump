@@ -93,10 +93,10 @@ type mltext struct {
 		Timestamp string
 	}
 	Bgp4mp_header struct {
-		Local_as int
-		Peer_as  int
-		Local_ip string
-		Peer_ip  string
+		Local_AS int
+		Peer_AS  int
+		Local_IP string
+		Peer_IP  string
 	}
 	Bgp_update struct {
 		Advertized_routes []struct {
@@ -104,9 +104,9 @@ type mltext struct {
 			Mask   int
 		}
 		Attrs struct {
-			As_path []struct {
-				As_seq []int
-				As_set []int
+			AS_path []struct {
+				AS_seq []int
+				AS_set []int
 			}
 			Next_hop string
 		}
@@ -137,15 +137,15 @@ func (m mlFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) 
 	retstr := ""
 	for _, ar := range mtext.Bgp_update.Advertized_routes {
 		aspstr := ""
-		for _, asp := range mtext.Bgp_update.Attrs.As_path {
-			for _, setelem := range asp.As_set {
+		for _, asp := range mtext.Bgp_update.Attrs.AS_path {
+			for _, setelem := range asp.AS_set {
 				if aspstr == "" {
 					aspstr += fmt.Sprintf("%d", setelem)
 				} else {
 					aspstr += fmt.Sprintf("-%d", setelem)
 				}
 			}
-			for _, seqelem := range asp.As_seq {
+			for _, seqelem := range asp.AS_seq {
 				if aspstr == "" {
 					aspstr += fmt.Sprintf("%d", seqelem)
 				} else {
@@ -153,14 +153,14 @@ func (m mlFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) 
 				}
 			}
 		}
-		retstr += fmt.Sprintf("%s,%s,%d,%d,%s,%s,%s,%s,%d,%s,%s\n", tparts[0], t1parts[0], mtext.Bgp4mp_header.Local_as,
-			mtext.Bgp4mp_header.Peer_as, mtext.Bgp4mp_header.Local_ip, mtext.Bgp4mp_header.Peer_ip,
+		retstr += fmt.Sprintf("%s,%s,%d,%d,%s,%s,%s,%s,%d,%s,%s\n", tparts[0], t1parts[0], mtext.Bgp4mp_header.Local_AS,
+			mtext.Bgp4mp_header.Peer_AS, mtext.Bgp4mp_header.Local_IP, mtext.Bgp4mp_header.Peer_IP,
 			"advertized", ar.Prefix, ar.Mask, aspstr,
 			mtext.Bgp_update.Attrs.Next_hop)
 	}
 	for _, wr := range mtext.Bgp_update.Withdrawn_routes {
-		retstr += fmt.Sprintf("%s,%s,%d,%d,%s,%s,%s,%s,%d,%s,%s\n", tparts[0], t1parts[0], mtext.Bgp4mp_header.Local_as,
-			mtext.Bgp4mp_header.Peer_as, mtext.Bgp4mp_header.Local_ip, mtext.Bgp4mp_header.Peer_ip,
+		retstr += fmt.Sprintf("%s,%s,%d,%d,%s,%s,%s,%s,%d,%s,%s\n", tparts[0], t1parts[0], mtext.Bgp4mp_header.Local_AS,
+			mtext.Bgp4mp_header.Peer_AS, mtext.Bgp4mp_header.Local_IP, mtext.Bgp4mp_header.Peer_IP,
 			"withdrawn", wr.Prefix, wr.Mask, "",
 			"")
 	}
@@ -237,7 +237,7 @@ func NewUniquePrefixList(fd io.Writer) *UniquePrefixList {
 func (upl *UniquePrefixList) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (string, error) {
 
 	timestamp := mrt.GetTimestamp(mbs)
-	advRoutes, err := mrt.GetAdvertizedPrefixes(mbs)
+	advRoutes, err := mrt.GetAdvertisedPrefixes(mbs)
 	asp, errasp := mrt.GetASPath(mbs)
 	if errasp != nil || len(asp) == 0 {
 		//maybe just a withdrawn message? make it empty.
@@ -266,7 +266,7 @@ func (upl *UniquePrefixList) addRoutes(rts []mrt.Route, info MBSInfo, timestamp 
 			continue
 		}
 
-		key := util.IpToRadixkey(route.IP, route.Mask)
+		key := util.IPToRadixkey(route.IP, route.Mask)
 		upl.mux.Lock()
 		if upl.prefixes[key] == nil {
 			upl.prefixes[key] = NewPrefixHistory(route.String(), info, timestamp, advert, asp)
@@ -312,7 +312,7 @@ func NewUniquePrefixSeries(fd io.Writer) *UniquePrefixSeries {
 func (ups *UniquePrefixSeries) format(mbs *mrt.MrtBufferStack, inf MBSInfo) (string, error) {
 	timestamp := mrt.GetTimestamp(mbs)
 
-	advRoutes, err := mrt.GetAdvertizedPrefixes(mbs)
+	advRoutes, err := mrt.GetAdvertisedPrefixes(mbs)
 	asp, errasp := mrt.GetASPath(mbs)
 	if errasp != nil || len(asp) == 0 {
 		//maybe just a withdrawn message? make it empty.
@@ -336,7 +336,7 @@ func (ups *UniquePrefixSeries) addRoutes(rts []mrt.Route, info MBSInfo, timestam
 			continue
 		}
 
-		key := util.IpToRadixkey(route.IP, route.Mask)
+		key := util.IPToRadixkey(route.IP, route.Mask)
 		ups.mux.Lock()
 		if ups.prefixes[key] == nil {
 			ups.prefixes[key] = NewPrefixHistory(route.String(), info, timestamp, advert, asp)
