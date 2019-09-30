@@ -202,6 +202,8 @@ func getFormatter(configFile ConfigFile, dumpOut io.Writer) (fmtr Formatter) {
 		fmtr = NewDayFormatter(dumpOut)
 	case "text":
 		fmtr = NewTextFormatter()
+	case "prefixlock":
+		fmtr = NewPrefixLockFormatter()
 	case "ml":
 		fmtr = NewMlFormatter()
 	case "id":

@@ -69,6 +69,89 @@ func (t *TextFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, erro
 // The text formatter doesn't need to summarize
 func (t *TextFormatter) summarize() {}
 
+// PrefixLock formatter keeps track of a prefix and the AS that advertized it.
+// It then "locks" that relation. In case the same prefix (exactly the same for now)
+// is advertized by some other AS, it outputs that event.
+type PrefixLockFormatter struct {
+	plmap map[string]*asLock
+	m     *sync.Mutex
+}
+
+type asEvent struct {
+	as uint32
+	t  time.Time
+}
+
+type asLock struct {
+	owner  asEvent
+	others []asEvent
+}
+
+func newAsLock(as uint32, t time.Time) *asLock {
+	return &asLock{
+		owner: asEvent{
+			as: as,
+			t:  t,
+		},
+	}
+}
+
+func NewPrefixLockFormatter() *PrefixLockFormatter {
+	return &PrefixLockFormatter{
+		plmap: make(map[string]*asLock),
+		m:     &sync.Mutex{},
+	}
+}
+
+// this function will output a string of an event if the prefix is already registered to another AS.
+func (p *PrefixLockFormatter) registerPrefixAS(pref string, as uint32, t time.Time) (string, error) {
+	p.m.Lock()
+	defer p.m.Unlock()
+	al, ok := p.plmap[pref]
+	if ok { // it exists already. check if we the event is from an "owner" or a "hijacker"
+		if al.owner.as == as { // owner.
+			return "", nil
+		}
+		for _, has := range al.others {
+			if has.as == as { // we have seen this "hijacker"
+				return "", nil
+			}
+		}
+		// we have a new "hijacker" register him and output it.
+		al.others = append(al.others, asEvent{as, t})
+		return fmt.Sprintf("Prefix:%s\t\tOwner:%d\t\tHijacker:%d\t\tTime:%s", pref, al.owner.as, as, t), nil
+	}
+	// register it and don't output anything
+	p.plmap[pref] = newAsLock(as, t)
+	return "", nil
+}
+
+func (p *PrefixLockFormatter) summarize() {}
+
+func (p *PrefixLockFormatter) format(mbs *mrt.MrtBufferStack, _ MBSInfo) (string, error) {
+	eventstrs := []string(nil)
+	advRoutes, merr := mrt.GetAdvertisedPrefixes(mbs)
+	asp, errasp := mrt.GetASPath(mbs)
+	if errasp != nil || len(asp) == 0 || merr != nil {
+		//maybe just a withdrawn message? don't output anything
+		return "", nil
+	}
+	ts := mrt.GetTimestamp(mbs)
+	for _, route := range advRoutes {
+		rets, err := p.registerPrefixAS(route.String(), asp[len(asp)-1], ts)
+		if rets != "" {
+			eventstrs = append(eventstrs, rets)
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	if len(eventstrs) != 0 {
+		return fmt.Sprintf("%s\n", strings.Join(eventstrs, "\n")), nil
+	}
+	return "", nil
+}
+
 // Formats each update as a JSON message
 type JSONFormatter struct{}
 
