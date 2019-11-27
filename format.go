@@ -15,13 +15,14 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
-	mrt "github.com/CSUNetSec/protoparse/protocol/mrt"
-	util "github.com/CSUNetSec/protoparse/util"
-	radix "github.com/armon/go-radix"
 	"io"
 	"strings"
 	"sync"
 	"time"
+
+	mrt "github.com/CSUNetSec/protoparse/protocol/mrt"
+	util "github.com/CSUNetSec/protoparse/util"
+	radix "github.com/armon/go-radix"
 )
 
 // A Formatter takes the bufferstack and the underlying buffer
@@ -350,6 +351,9 @@ func (upl *UniquePrefixList) addRoutes(rts []mrt.Route, info MBSInfo, timestamp 
 		}
 
 		key := util.IPToRadixkey(route.IP, route.Mask)
+		if key == "" {
+			continue
+		}
 		upl.mux.Lock()
 		if upl.prefixes[key] == nil {
 			upl.prefixes[key] = NewPrefixHistory(route.String(), info, timestamp, advert, asp)
@@ -420,6 +424,9 @@ func (ups *UniquePrefixSeries) addRoutes(rts []mrt.Route, info MBSInfo, timestam
 		}
 
 		key := util.IPToRadixkey(route.IP, route.Mask)
+		if key == "" {
+			continue
+		}
 		ups.mux.Lock()
 		if ups.prefixes[key] == nil {
 			ups.prefixes[key] = NewPrefixHistory(route.String(), info, timestamp, advert, asp)
